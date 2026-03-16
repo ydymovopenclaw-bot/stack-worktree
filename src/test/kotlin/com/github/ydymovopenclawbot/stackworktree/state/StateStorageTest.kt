@@ -18,6 +18,8 @@ class StateStorageTest {
 
     private lateinit var storage: StateStorage
 
+    private val defaultConfig = RepoConfig(trunk = "main", remote = "origin")
+
     /** Runs a git command against [repoDir] for test fixture setup. */
     private fun git(vararg args: String) {
         val result = ProcessGitRunner().run(repoDir, args.toList())
@@ -49,7 +51,7 @@ class StateStorageTest {
 
     @Test
     fun `exists returns true after first write`() {
-        storage.write(StackState())
+        storage.write(StackState(repoConfig = defaultConfig))
         assertTrue(storage.exists())
     }
 
@@ -65,45 +67,50 @@ class StateStorageTest {
     @Test
     fun `write then read returns identical StackState`() {
         val original = StackState(
-            stacks = listOf(
-                StackEntry(
-                    name = "my-feature",
-                    branches = listOf("main", "feat/base", "feat/top"),
-                    worktreePaths = listOf("", "/tmp/feat-base", "/tmp/feat-top"),
+            repoConfig = defaultConfig,
+            branches = mapOf(
+                "main" to BranchNode(name = "main", parent = null),
+                "feat/base" to BranchNode(
+                    name = "feat/base",
+                    parent = "main",
+                    children = listOf("feat/top"),
+                    worktreePath = "/tmp/feat-base",
+                    health = BranchHealth.CLEAN,
+                ),
+                "feat/top" to BranchNode(
+                    name = "feat/top",
+                    parent = "feat/base",
+                    worktreePath = "/tmp/feat-top",
+                    health = BranchHealth.NEEDS_REBASE,
                 ),
             ),
-            activeStack = "my-feature",
         )
 
         storage.write(original)
         val loaded = storage.read()
 
         assertNotNull(loaded)
-        assertEquals(original.activeStack, loaded.activeStack)
-        assertEquals(original.schemaVersion, loaded.schemaVersion)
-        assertEquals(1, loaded.stacks.size)
-        val entry = loaded.stacks[0]
-        assertEquals("my-feature", entry.name)
-        assertEquals(listOf("main", "feat/base", "feat/top"), entry.branches)
-        assertEquals(listOf("", "/tmp/feat-base", "/tmp/feat-top"), entry.worktreePaths)
+        assertEquals(original.repoConfig, loaded.repoConfig)
+        assertEquals(original.branches.size, loaded.branches.size)
+        assertEquals(original.branches["feat/base"]?.worktreePath, loaded.branches["feat/base"]?.worktreePath)
+        assertEquals(original.branches["feat/top"]?.health, loaded.branches["feat/top"]?.health)
     }
 
     @Test
     fun `write then read round-trips empty StackState`() {
-        val empty = StackState()
+        val empty = StackState(repoConfig = defaultConfig)
         storage.write(empty)
         val loaded = storage.read()
         assertNotNull(loaded)
-        assertEquals(0, loaded.stacks.size)
-        assertNull(loaded.activeStack)
-        assertEquals(1, loaded.schemaVersion)
+        assertEquals(0, loaded.branches.size)
+        assertEquals(defaultConfig, loaded.repoConfig)
     }
 
     @Test
     fun `second write overwrites state and read returns latest`() {
-        storage.write(StackState(activeStack = "v1"))
-        storage.write(StackState(activeStack = "v2"))
-        assertEquals("v2", storage.read()!!.activeStack)
+        storage.write(StackState(repoConfig = RepoConfig(trunk = "v1", remote = "origin")))
+        storage.write(StackState(repoConfig = RepoConfig(trunk = "v2", remote = "origin")))
+        assertEquals("v2", storage.read()!!.repoConfig.trunk)
     }
 
     // -------------------------------------------------------------------------
@@ -112,8 +119,8 @@ class StateStorageTest {
 
     @Test
     fun `multiple writes create a commit chain in the ref`() {
-        storage.write(StackState(activeStack = "first"))
-        storage.write(StackState(activeStack = "second"))
+        storage.write(StackState(repoConfig = RepoConfig(trunk = "first", remote = "origin")))
+        storage.write(StackState(repoConfig = RepoConfig(trunk = "second", remote = "origin")))
 
         // The commit pointed to by the ref must have a "parent" line, proving
         // the second commit chains the first as its parent.
@@ -128,9 +135,9 @@ class StateStorageTest {
 
     @Test
     fun `ref log grows by one entry per write`() {
-        storage.write(StackState(activeStack = "a"))
-        storage.write(StackState(activeStack = "b"))
-        storage.write(StackState(activeStack = "c"))
+        storage.write(StackState(repoConfig = RepoConfig(trunk = "a", remote = "origin")))
+        storage.write(StackState(repoConfig = RepoConfig(trunk = "b", remote = "origin")))
+        storage.write(StackState(repoConfig = RepoConfig(trunk = "c", remote = "origin")))
 
         // git log on the ref should show exactly 3 commits (the chain length)
         val log = ProcessGitRunner()
