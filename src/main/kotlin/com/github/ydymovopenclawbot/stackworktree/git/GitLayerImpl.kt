@@ -32,7 +32,9 @@ class GitLayerImpl(
             }
             throw WorktreeCommandException(err)
         }
-        return worktreeList().first { it.path == path }
+        val canonical = java.io.File(path).canonicalPath
+        return worktreeList().firstOrNull { java.io.File(it.path).canonicalPath == canonical }
+            ?: throw WorktreeCommandException("worktree add succeeded but path not found in list: $path")
     }
 
     override fun worktreeRemove(path: String) {
@@ -40,8 +42,12 @@ class GitLayerImpl(
         if (!result.success()) {
             val err = result.errorOutputAsJoinedString
             when {
-                err.contains("is locked", ignoreCase = true) -> throw WorktreeIsLockedException(path)
-                else -> throw WorktreeNotFoundException(path)
+                err.contains("is locked", ignoreCase = true) ->
+                    throw WorktreeIsLockedException(path)
+                err.contains("not a working tree", ignoreCase = true) ||
+                        err.contains("is not a registered worktree", ignoreCase = true) ->
+                    throw WorktreeNotFoundException(path)
+                else -> throw WorktreeCommandException(err)
             }
         }
     }
@@ -101,7 +107,10 @@ class GitLayerImpl(
                     head = ""; branch = ""; locked = false
                 }
                 line.startsWith("HEAD ")     -> head   = line.removePrefix("HEAD ")
-                line.startsWith("branch ")  -> branch = line.removePrefix("branch refs/heads/")
+                // Strip the well-known heads prefix; fall back to the full ref for
+                // anything outside refs/heads/ (e.g. refs/tags/ from detached-style adds).
+                line.startsWith("branch ")  -> branch = line.removePrefix("branch ")
+                    .removePrefix("refs/heads/")
                 line == "detached"          -> branch = ""
                 line.startsWith("locked")   -> locked = true
                 line.isBlank() && path.isNotEmpty() -> {
