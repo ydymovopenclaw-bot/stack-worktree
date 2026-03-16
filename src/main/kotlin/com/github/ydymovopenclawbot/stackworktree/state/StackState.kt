@@ -1,27 +1,52 @@
 package com.github.ydymovopenclawbot.stackworktree.state
 
-/**
- * Top-level state persisted in refs/stacktree/state.
- *
- * @property stacks     All stacks tracked by StackTree, ordered arbitrarily.
- * @property activeStack Name of the currently active stack, or null if none selected.
- * @property schemaVersion Monotonically increasing integer for forward-compatible migration.
- */
+import kotlinx.serialization.Serializable
+
+/** Top-level state for a single repository's stacked-branch graph. */
+@Serializable
 data class StackState(
-    val stacks: List<StackEntry> = emptyList(),
-    val activeStack: String? = null,
-    val schemaVersion: Int = 1,
+    val repoConfig: RepoConfig,
+    val branches: Map<String, BranchNode> = emptyMap(),
+)
+
+/** Repository-level configuration stored with the stack. */
+@Serializable
+data class RepoConfig(
+    val trunk: String,
+    val remote: String,
+    val version: Int = 1,
+)
+
+/** Health of a branch relative to its parent. */
+@Serializable
+enum class BranchHealth {
+    CLEAN,
+    NEEDS_REBASE,
+    HAS_CONFLICTS,
+    MERGED,
+}
+
+/** Pull-request metadata (provider-agnostic). */
+@Serializable
+data class PrInfo(
+    val provider: String,  // e.g. "github", "gitlab"
+    val id: String,
+    val url: String,
+    val status: String,    // e.g. "open", "merged", "closed"
+    val ciStatus: String,  // e.g. "passing", "failing", "pending"
 )
 
 /**
- * A single named stack: an ordered list of branches from bottom (index 0) to top.
- *
- * @property name          Logical stack name (e.g. "my-feature").
- * @property branches      Ordered branch names, bottom → top (e.g. ["main", "feat/base", "feat/top"]).
- * @property worktreePaths Local worktree paths parallel to [branches]; empty string means no worktree.
+ * Represents one branch in the stacked-branch graph.
+ * [name] is also the map key in [StackState.branches].
  */
-data class StackEntry(
+@Serializable
+data class BranchNode(
     val name: String,
-    val branches: List<String>,
-    val worktreePaths: List<String> = emptyList(),
+    val parent: String?,                     // null only for trunk
+    val children: List<String> = emptyList(),
+    val worktreePath: String? = null,
+    val prInfo: PrInfo? = null,
+    val baseCommit: String? = null,          // SHA of the merge-base with parent
+    val health: BranchHealth = BranchHealth.CLEAN,
 )
