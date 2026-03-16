@@ -3,7 +3,8 @@ package com.github.ydymovopenclawbot.stackworktree.state
 import com.github.ydymovopenclawbot.stackworktree.git.GitException
 import com.github.ydymovopenclawbot.stackworktree.git.GitRunResult
 import com.github.ydymovopenclawbot.stackworktree.git.GitRunner
-import com.google.gson.Gson
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -57,8 +58,8 @@ class StateStorage(
             // line format: "100644 blob <sha>  state.json" (two spaces before name)
             .split("\\s+".toRegex())[2]
 
-        val json = exec("cat-file", "blob", blobSha).stdout
-        return GSON.fromJson(json, StackState::class.java)
+        val jsonStr = exec("cat-file", "blob", blobSha).stdout
+        return JSON.decodeFromString<StackState>(jsonStr)
     }
 
     /**
@@ -72,10 +73,10 @@ class StateStorage(
      * 4. Advance [REF] to the new commit via `git update-ref`.
      */
     fun write(state: StackState) {
-        val json = GSON.toJson(state)
+        val jsonStr = JSON.encodeToString(state)
 
         // Step 1 — blob
-        val blobSha = execWithStdin(json, "hash-object", "-w", "--stdin").trim()
+        val blobSha = execWithStdin(jsonStr, "hash-object", "-w", "--stdin").trim()
 
         // Step 2 — tree  (mktree reads one entry per line from stdin; tab-separated)
         val treeInput = "100644 blob $blobSha\t$BLOB_FILENAME\n"
@@ -177,7 +178,7 @@ class StateStorage(
         const val REF = "refs/stacktree/state"
         const val BLOB_FILENAME = "state.json"
 
-        val GSON: Gson = Gson()
+        val JSON = Json
 
         /** Stable author/committer identity used for every stacktree commit. */
         val AUTHOR_ENV: Map<String, String> = mapOf(
