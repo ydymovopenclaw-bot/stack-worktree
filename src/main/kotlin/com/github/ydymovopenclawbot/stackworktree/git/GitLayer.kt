@@ -15,6 +15,15 @@ interface GitLayer {
 
     /** Prunes stale worktree administrative files. */
     fun worktreePrune()
+
+    /**
+     * Returns how many commits [branch] is ahead of and behind [parent].
+     *
+     * Implemented via `git rev-list --left-right --count <parent>...<branch>`.
+     * - ahead = commits in [branch] not in [parent]
+     * - behind = commits in [parent] not in [branch]
+     */
+    fun aheadBehind(branch: String, parent: String): AheadBehind
 }
 
 /**
@@ -31,3 +40,6 @@ data class Worktree(
     val head: String,
     val isLocked: Boolean,
 )
+
+/** How many commits a branch is ahead of and behind its parent. */
+data class AheadBehind(val ahead: Int, val behind: Int)
