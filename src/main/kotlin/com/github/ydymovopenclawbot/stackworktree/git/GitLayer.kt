@@ -1,22 +1,33 @@
 package com.github.ydymovopenclawbot.stackworktree.git
 
 /**
- * Git layer — responsible for all git operations (worktree creation, branch management, etc.).
+ * Git layer — responsible for all git worktree operations.
  */
 interface GitLayer {
-    /** Returns the list of current git worktrees for the project. */
-    fun listWorktrees(): List<WorktreeInfo>
-
     /** Creates a new worktree at [path] checked out at [branch]. */
-    fun createWorktree(path: String, branch: String): WorktreeInfo
+    fun worktreeAdd(path: String, branch: String): Worktree
 
     /** Removes the worktree at [path]. */
-    fun removeWorktree(path: String)
+    fun worktreeRemove(path: String)
+
+    /** Returns the list of current git worktrees for the repository. */
+    fun worktreeList(): List<Worktree>
+
+    /** Prunes stale worktree administrative files. */
+    fun worktreePrune()
 }
 
-/** Minimal descriptor for a git worktree. */
-data class WorktreeInfo(
+/**
+ * Descriptor for a git worktree.
+ *
+ * @param path     Absolute path to the worktree directory.
+ * @param branch   Checked-out branch name (short form), or empty string for a detached HEAD.
+ * @param head     Full SHA of the current HEAD commit.
+ * @param isLocked Whether the worktree is locked (prevents pruning / removal).
+ */
+data class Worktree(
     val path: String,
     val branch: String,
-    val isMain: Boolean = false,
+    val head: String,
+    val isLocked: Boolean,
 )
