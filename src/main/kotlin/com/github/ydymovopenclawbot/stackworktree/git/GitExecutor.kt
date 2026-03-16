@@ -27,7 +27,7 @@ data class LogEntry(val hash: String, val subject: String, val authorDate: Strin
  */
 class GitExecutor(
     private val root: Path,
-    val runner: GitRunner,
+    private val runner: GitRunner,
     private val timeoutMs: Long = 30_000L,
 ) {
     // -------------------------------------------------------------------------
@@ -85,11 +85,14 @@ class GitExecutor(
                 res.stdout.lines()
                     .filter(String::isNotBlank)
                     .map { line ->
-                        val parts = line.split('\u001f')
+                        // Use index-based parsing instead of split() so a unit-separator
+                        // character inside the commit subject does not corrupt the fields.
+                        val first = line.indexOf('\u001f')
+                        val last = line.lastIndexOf('\u001f')
                         LogEntry(
-                            hash = parts[0],
-                            subject = parts.getOrElse(1) { "" },
-                            authorDate = parts.getOrElse(2) { "" },
+                            hash = if (first >= 0) line.substring(0, first) else line,
+                            subject = if (first >= 0 && last > first) line.substring(first + 1, last) else "",
+                            authorDate = if (last >= 0) line.substring(last + 1) else "",
                         )
                     }
             }

@@ -23,14 +23,23 @@ class ProcessGitRunner : GitRunner {
             .directory(workDir.toFile())
             .redirectErrorStream(false)
             .start()
+
+        // Drain stdout and stderr on separate threads BEFORE calling waitFor.
+        // If streams are read after waitFor the OS pipe buffer can fill up, causing
+        // the child process to block on write and waitFor to never return.
+        val stdoutFuture = java.util.concurrent.CompletableFuture
+            .supplyAsync { process.inputStream.bufferedReader().readText().trim() }
+        val stderrFuture = java.util.concurrent.CompletableFuture
+            .supplyAsync { process.errorStream.bufferedReader().readText().trim() }
+
         val finished = process.waitFor(30, TimeUnit.SECONDS)
         if (!finished) {
             process.destroyForcibly()
             return GitRunResult("", "git process timed out after 30s", -1)
         }
         return GitRunResult(
-            stdout = process.inputStream.bufferedReader().readText().trim(),
-            stderr = process.errorStream.bufferedReader().readText().trim(),
+            stdout = stdoutFuture.get(),
+            stderr = stderrFuture.get(),
             exitCode = process.exitValue(),
         )
     }
