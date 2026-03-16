@@ -22,7 +22,7 @@ class StackGraphModel {
     /**
      * Converts [state] into a list of [GraphNode].
      *
-     * @param state       Persisted stack topology (stacks, branches, worktree paths).
+     * @param state       Persisted stack topology (branches, worktree paths, health).
      * @param aheadBehind Ahead/behind commit counts keyed by branch name; may be
      *                    partial — missing entries produce [NodeHealth.UNKNOWN] and
      *                    an empty badge text.
@@ -32,7 +32,7 @@ class StackGraphModel {
         state: StackState,
         aheadBehind: Map<String, AheadBehind> = emptyMap(),
     ): List<GraphNode> {
-        if (state.stacks.isEmpty()) return emptyList()
+        if (state.branches.isEmpty()) return emptyList()
 
         val worktreeBranches = collectWorktreeBranches(state)
         val root = buildTree(state)
@@ -48,47 +48,25 @@ class StackGraphModel {
     // ---------------------------------------------------------------------------
 
     /**
-     * Builds a [StackNode] tree from the flat [StackEntry] lists.
+     * Builds a [StackNode] tree from the flat [StackState.branches] map.
      *
-     * For each entry the branch list is walked pairwise to record parent→child
-     * edges.  Branches appearing in multiple entries share a single tree node
-     * (fork point), so a fork like `["main","A"]` + `["main","B"]` produces:
-     * ```
-     * main
-     * ├── A
-     * └── B
-     * ```
+     * The trunk is identified by [StackState.repoConfig.trunk]. Children are
+     * sourced from [com.github.ydymovopenclawbot.stackworktree.state.BranchNode.children]
+     * on each node, producing a tree that mirrors the stacked-branch hierarchy.
      */
-    private fun buildTree(state: StackState): StackNode {
-        // branch → ordered set of direct children (insertion order preserved)
-        val childrenMap = LinkedHashMap<String, LinkedHashSet<String>>()
+    private fun buildTree(state: StackState): StackNode =
+        buildStackNode(state.repoConfig.trunk, state)
 
-        for (entry in state.stacks) {
-            for (branch in entry.branches) {
-                childrenMap.getOrPut(branch) { LinkedHashSet() }
-            }
-            for (i in 0 until entry.branches.size - 1) {
-                childrenMap.getOrPut(entry.branches[i]) { LinkedHashSet() }
-                    .add(entry.branches[i + 1])
-            }
-        }
-
-        val allChildren = childrenMap.values.flatten().toSet()
-        // Root = branch that is never a child of another branch
-        val root = childrenMap.keys.firstOrNull { it !in allChildren }
-            ?: state.stacks.first().branches.first()
-
-        return buildStackNode(root, childrenMap)
+    private fun buildStackNode(branch: String, state: StackState): StackNode {
+        val node = state.branches[branch]
+        val childBranches = node?.children ?: emptyList()
+        return StackNode(
+            branch = branch,
+            children = childBranches
+                .filter { it in state.branches }
+                .map { buildStackNode(it, state) },
+        )
     }
-
-    private fun buildStackNode(
-        branch: String,
-        childrenMap: Map<String, LinkedHashSet<String>>,
-    ): StackNode = StackNode(
-        branch = branch,
-        children = (childrenMap[branch] ?: emptySet<String>())
-            .map { buildStackNode(it, childrenMap) },
-    )
 
     // ---------------------------------------------------------------------------
     // Layout algorithm — subtree-width DFS
@@ -154,9 +132,7 @@ class StackGraphModel {
     }
 
     private fun collectWorktreeBranches(state: StackState): Set<String> =
-        state.stacks.flatMapTo(mutableSetOf()) { entry ->
-            entry.branches.zip(entry.worktreePaths)
-                .filter { (_, path) -> path.isNotEmpty() }
-                .map { (branch, _) -> branch }
-        }
+        state.branches.values
+            .filter { it.worktreePath != null }
+            .mapTo(mutableSetOf()) { it.name }
 }
