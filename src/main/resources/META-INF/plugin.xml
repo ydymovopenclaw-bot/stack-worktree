@@ -5,11 +5,17 @@
     <vendor>ydymovopenclaw-bot</vendor>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>Git4Idea</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow factoryClass="com.github.ydymovopenclawbot.stackworktree.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
         <postStartupActivity implementation="com.github.ydymovopenclawbot.stackworktree.startup.MyProjectActivity" />
+        <changesViewContent
+            id="Stacks"
+            tabName="Stacks"
+            className="com.github.ydymovopenclawbot.stackworktree.ui.StacksTabFactory"
+            predicateClassName="com.github.ydymovopenclawbot.stackworktree.ui.StacksTabVisibilityPredicate"/>
     </extensions>
 </idea-plugin>
