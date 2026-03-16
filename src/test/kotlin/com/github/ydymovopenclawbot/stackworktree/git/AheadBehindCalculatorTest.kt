@@ -25,10 +25,11 @@ class AheadBehindCalculatorTest {
         }
 
         // Unused in these tests
-        override fun listWorktrees(): List<WorktreeInfo> = emptyList()
-        override fun createWorktree(path: String, branch: String): WorktreeInfo =
-            WorktreeInfo(path, branch)
-        override fun removeWorktree(path: String) = Unit
+        override fun worktreeAdd(path: String, branch: String): Worktree =
+            Worktree(path, branch, head = "", isLocked = false)
+        override fun worktreeRemove(path: String) = Unit
+        override fun worktreeList(): List<Worktree> = emptyList()
+        override fun worktreePrune() = Unit
     }
 
     private lateinit var fake: FakeGitLayer

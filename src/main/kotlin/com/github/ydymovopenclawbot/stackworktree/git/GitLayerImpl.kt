@@ -61,6 +61,20 @@ class GitLayerImpl(
         runOrThrow("prune")
     }
 
+    override fun aheadBehind(branch: String, parent: String): AheadBehind {
+        val handler = GitLineHandler(project, gitRoot, GitCommand.REV_LIST).also {
+            it.addParameters("--left-right", "--count", "$parent...$branch")
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) throw WorktreeCommandException(result.errorOutputAsJoinedString)
+        // Output is "<behind>\t<ahead>" (left=parent side, right=branch side)
+        val line = result.output.firstOrNull()?.trim()
+            ?: throw WorktreeCommandException("rev-list returned no output for $parent...$branch")
+        val parts = line.split("\t")
+        if (parts.size != 2) throw WorktreeCommandException("unexpected rev-list output: $line")
+        return AheadBehind(ahead = parts[1].toInt(), behind = parts[0].toInt())
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
