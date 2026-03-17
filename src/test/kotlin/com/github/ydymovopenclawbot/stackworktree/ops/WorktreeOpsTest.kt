@@ -53,6 +53,7 @@ class WorktreeOpsTest {
         override fun worktreeList(): List<Worktree> = worktreeListResult
 
         override fun worktreePrune()                                                   = unsupported()
+        override fun listLocalBranches(): List<String>                                 = unsupported()
         override fun aheadBehind(branch: String, parent: String): AheadBehind         = unsupported()
         override fun createBranch(branchName: String, baseBranch: String)              = unsupported()
         override fun deleteBranch(branchName: String)                                  = unsupported()
