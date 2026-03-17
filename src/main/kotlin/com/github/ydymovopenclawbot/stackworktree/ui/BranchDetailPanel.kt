@@ -40,6 +40,12 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
     /** Invoked on the EDT when the user clicks "Remove Worktree". */
     var onRemoveWorktree: ((branchName: String) -> Unit)? = null
 
+    /** Invoked on the EDT when the user clicks "Open in New Window". Receives the worktree path. */
+    var onOpenInNewWindow: ((worktreePath: String) -> Unit)? = null
+
+    /** Invoked on the EDT when the user clicks "Open in Terminal". Receives path and branch name. */
+    var onOpenInTerminal: ((worktreePath: String, branchName: String) -> Unit)? = null
+
     // ── Metadata labels ───────────────────────────────────────────────────────
 
     private val branchNameLabel = JBLabel(EMPTY).apply {
@@ -58,6 +64,12 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
 
     /** Opens the worktree directory in the system file manager. */
     private val openButton = JButton("Open").apply { isEnabled = false }
+
+    /** Opens the worktree in a new IDE window (or focuses the existing one). */
+    private val openInNewWindowButton = JButton("New Window").apply { isEnabled = false }
+
+    /** Opens a terminal tab pre-cd'd to the worktree directory. */
+    private val openInTerminalButton = JButton("Terminal").apply { isEnabled = false }
 
     /** Stubbed action buttons — Rebase/Submit PR remain disabled until implemented. */
     private val rebaseButton         = JButton("Rebase").apply    { isEnabled = false }
@@ -80,15 +92,23 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
         commitModel.clear()
         node.commits.forEach { commitModel.addElement("${it.hash}  ${it.subject}") }
 
-        // Re-wire the Open button for the new path; replace previous listener first.
+        // Re-wire the Open / New Window / Terminal buttons for the new path.
         openButton.actionListeners.forEach { openButton.removeActionListener(it) }
+        openInNewWindowButton.actionListeners.forEach { openInNewWindowButton.removeActionListener(it) }
+        openInTerminalButton.actionListeners.forEach { openInTerminalButton.removeActionListener(it) }
         if (node.worktreePath != null) {
             worktreeLabel.text = node.worktreePath
             openButton.isEnabled = true
             openButton.addActionListener { openDirectory(node.worktreePath) }
+            openInNewWindowButton.isEnabled = true
+            openInNewWindowButton.addActionListener { onOpenInNewWindow?.invoke(node.worktreePath) }
+            openInTerminalButton.isEnabled = true
+            openInTerminalButton.addActionListener { onOpenInTerminal?.invoke(node.worktreePath, node.branchName) }
         } else {
             worktreeLabel.text = NOT_BOUND
             openButton.isEnabled = false
+            openInNewWindowButton.isEnabled = false
+            openInTerminalButton.isEnabled = false
         }
 
         // Wire Create / Remove worktree buttons — only one is enabled at a time.
@@ -113,6 +133,10 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
         worktreeLabel.text    = NOT_BOUND
         openButton.isEnabled  = false
         openButton.actionListeners.forEach { openButton.removeActionListener(it) }
+        openInNewWindowButton.isEnabled = false
+        openInNewWindowButton.actionListeners.forEach { openInNewWindowButton.removeActionListener(it) }
+        openInTerminalButton.isEnabled = false
+        openInTerminalButton.actionListeners.forEach { openInTerminalButton.removeActionListener(it) }
         createWorktreeButton.isEnabled = false
         createWorktreeButton.actionListeners.forEach { createWorktreeButton.removeActionListener(it) }
         removeWorktreeButton.isEnabled = false
@@ -154,7 +178,7 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
         addRow("Parent:", parentLabel)
         addRow("Ahead / Behind:", aheadBehindLabel)
 
-        // Worktree row: label + path + Open button
+        // Worktree row: label + path + Open / New Window / Terminal buttons
         labelConstraints.gridy = row
         panel.add(JBLabel("Worktree:").apply {
             foreground = JBUI.CurrentTheme.Label.disabledForeground()
@@ -163,6 +187,8 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
             isOpaque = false
             add(worktreeLabel)
             add(openButton)
+            add(openInNewWindowButton)
+            add(openInTerminalButton)
         }
         valueConstraints.gridy = row
         panel.add(worktreeRow, valueConstraints)

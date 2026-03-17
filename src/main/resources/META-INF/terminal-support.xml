@@ -1,0 +1,14 @@
+<!--
+  Loaded only when the bundled Terminal plugin (org.jetbrains.plugins.terminal) is
+  present.  Registering the action here — rather than in plugin.xml — ensures that
+  OpenInTerminalAction is never instantiated in IDEs that ship without the Terminal
+  plugin, which would cause a ClassNotFoundException at startup.
+-->
+<idea-plugin>
+    <actions>
+        <action id="StackWorktree.OpenInTerminal"
+                class="com.github.ydymovopenclawbot.stackworktree.actions.OpenInTerminalAction"
+                text="Open in Terminal"
+                description="Open a terminal tab pre-cd'd to this worktree's directory"/>
+    </actions>
+</idea-plugin>

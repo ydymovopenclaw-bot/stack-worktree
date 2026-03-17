@@ -21,6 +21,7 @@ import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.HealthStatus
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphData
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphPanel
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
+import com.github.ydymovopenclawbot.stackworktree.actions.OpenInNewWindowAction
 import com.github.ydymovopenclawbot.stackworktree.actions.StackDataKeys
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -106,6 +107,15 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     private var connection: MessageBusConnection? = null
 
     /**
+     * Last-known list of worktrees, updated on the EDT in [performRefresh].
+     * Read by [buildContextMenu] to look up the path for a graph node that has a worktree.
+     * Volatile so the context-menu handler (EDT) sees writes from the refresh pipeline
+     * without synchronisation.
+     */
+    @Volatile
+    private var cachedWorktrees: List<Worktree> = emptyList()
+
+    /**
      * Per-repository helper objects whose lifetime matches the open Stacks tab.
      *
      * Hoisted here so that [AheadBehindCalculator]'s TTL cache survives across
@@ -163,6 +173,19 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         detail.onCreateWorktree = { branchName -> launchCreateWorktree(branchName) }
         detail.onRemoveWorktree = { branchName -> launchRemoveWorktree(branchName) }
 
+        // Wire Open in New Window / Open in Terminal buttons in the detail panel.
+        // The path comes directly from the StackNode already held in the detail panel.
+        detail.onOpenInNewWindow = { worktreePath ->
+            val wt = cachedWorktrees.find { it.path == worktreePath }
+                ?: Worktree(path = worktreePath, branch = "", head = "", isLocked = false)
+            OpenInNewWindowAction.perform(wt)
+        }
+        detail.onOpenInTerminal = { worktreePath, branchName ->
+            val wt = cachedWorktrees.find { it.path == worktreePath }
+                ?: Worktree(path = worktreePath, branch = branchName, head = "", isLocked = false)
+            openInTerminalIfAvailable(wt)
+        }
+
         // ── Node selection → load detail panel ───────────────────────────────
         graph.onNodeSelected = { node ->
             LOG.debug("Selected node: ${node.branchName}")
@@ -204,10 +227,14 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         val toolbar = StackTreeToolbar.create("StacksTab") { performRefresh() }
         toolbar.targetComponent = graph
 
-        // Worktree list — clicking a tracked row selects its node in the graph.
-        val wtPanel = WorktreeListPanel(project) { wt ->
-            if (wt.branch.isNotEmpty()) graph.selectNode(wt.branch)
-        }
+        // Worktree list — clicking a tracked row selects its node in the graph;
+        // right-clicking shows Open in New Window / Terminal actions.
+        val wtPanel = WorktreeListPanel(
+            project            = project,
+            onWorktreeSelected = { wt -> if (wt.branch.isNotEmpty()) graph.selectNode(wt.branch) },
+            onOpenInNewWindow  = { wt -> OpenInNewWindowAction.perform(wt) },
+            onOpenInTerminal   = { wt -> openInTerminalIfAvailable(wt) },
+        )
         worktreeListPanel = wtPanel
 
         // Subscribe to git-repo changes, NewStack writes, AND track/untrack mutations
@@ -242,6 +269,10 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
 
             override fun getData(dataId: String): Any? = when {
                 StackDataKeys.SELECTED_BRANCH_NAME.`is`(dataId) -> graph.selectedNodeId
+                StackDataKeys.SELECTED_WORKTREE.`is`(dataId) -> {
+                    val branch = graph.selectedNodeId ?: return@getData null
+                    cachedWorktrees.find { it.branch == branch && it.path.isNotEmpty() }
+                }
                 else -> null
             }
         }
@@ -249,11 +280,12 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
 
     override fun disposeContent() {
         connection?.disconnect()
-        connection  = null
-        graphPanel  = null
-        detailPanel = null
+        connection       = null
+        graphPanel       = null
+        detailPanel      = null
         worktreeListPanel = null
-        helpers           = null
+        helpers          = null
+        cachedWorktrees  = emptyList()
     }
 
     // ── Refresh pipeline ──────────────────────────────────────────────────────
@@ -366,6 +398,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 )
 
                 ApplicationManager.getApplication().invokeLater {
+                    cachedWorktrees = worktrees
                     graphPanel?.updateGraph(StackGraphData(nodes))
                     worktreeListPanel?.refresh(worktrees, trackedBranches)
                     updateStatusBar(viewModel)
@@ -458,6 +491,19 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 val removeItem = JMenuItem("Remove Worktree")
                 removeItem.addActionListener { launchRemoveWorktree(node.branchName) }
                 popup.add(removeItem)
+
+                // Open actions — only meaningful when the branch has a linked worktree.
+                val wt = cachedWorktrees.find { it.branch == node.branchName }
+                if (wt != null) {
+                    popup.add(JSeparator())
+                    val openWindowItem = JMenuItem("Open in New Window")
+                    openWindowItem.addActionListener { OpenInNewWindowAction.perform(wt) }
+                    popup.add(openWindowItem)
+
+                    val openTerminalItem = JMenuItem("Open in Terminal")
+                    openTerminalItem.addActionListener { openInTerminalIfAvailable(wt) }
+                    popup.add(openTerminalItem)
+                }
             }
 
             popup.add(JSeparator())
@@ -578,6 +624,22 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 }
             }
         }.queue()
+    }
+
+    /**
+     * Opens [wt] in a terminal tab via [OpenInTerminalAction.perform].
+     *
+     * Wrapped in a try/catch so that if the Terminal plugin is absent at runtime
+     * (unlikely for IDEA but possible in stripped builds) the call is silently
+     * ignored rather than crashing the whole refresh pipeline.
+     */
+    private fun openInTerminalIfAvailable(wt: Worktree) {
+        try {
+            com.github.ydymovopenclawbot.stackworktree.actions.OpenInTerminalAction
+                .perform(project, wt)
+        } catch (_: NoClassDefFoundError) {
+            LOG.warn("Terminal plugin not available; cannot open worktree in terminal")
+        }
     }
 
     private fun notify(message: String, type: NotificationType) {

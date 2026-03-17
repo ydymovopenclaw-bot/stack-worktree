@@ -21,7 +21,9 @@ import java.awt.event.MouseEvent
 import java.awt.geom.RoundRectangle2D
 import java.io.File
 import javax.swing.BoxLayout
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.SwingConstants
 
 private const val COLLAPSE_KEY = "stackworktree.worktreeListPanel.collapsed"
@@ -39,6 +41,10 @@ private const val COLLAPSE_KEY = "stackworktree.worktreeListPanel.collapsed"
  * - 7-character HEAD short hash in a secondary colour
  * - "Stack" pill badge when the branch is registered in the StackTree graph
  *
+ * Right-clicking any row shows a context menu with:
+ * - **Open in New Window** — fires [onOpenInNewWindow] when provided.
+ * - **Open in Terminal** — fires [onOpenInTerminal] when provided.
+ *
  * Collapse state is persisted across IDE restarts via [PropertiesComponent] so
  * the panel reopens in the same position the user left it.
  *
@@ -48,6 +54,8 @@ private const val COLLAPSE_KEY = "stackworktree.worktreeListPanel.collapsed"
 class WorktreeListPanel(
     private val project: Project,
     private val onWorktreeSelected: (Worktree) -> Unit,
+    private val onOpenInNewWindow: ((Worktree) -> Unit)? = null,
+    private val onOpenInTerminal: ((Worktree) -> Unit)? = null,
 ) : JBPanel<WorktreeListPanel>(BorderLayout()) {
 
     // -------------------------------------------------------------------------
@@ -153,21 +161,28 @@ class WorktreeListPanel(
             isOpaque = false
             border = JBUI.Borders.empty(2, 10, 2, 10)
 
-            if (isTracked) {
-                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                addMouseListener(object : MouseAdapter() {
-                    override fun mouseClicked(e: MouseEvent) = onWorktreeSelected(wt)
-                    override fun mouseEntered(e: MouseEvent) {
-                        isOpaque = true
-                        background = ROW_HOVER_COLOR
-                        repaint()
-                    }
-                    override fun mouseExited(e: MouseEvent) {
-                        isOpaque = false
-                        repaint()
-                    }
-                })
-            }
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    if (e.isPopupTrigger) { showContextMenu(e); return }
+                    if (isTracked && !e.isConsumed) onWorktreeSelected(wt)
+                }
+                override fun mousePressed(e: MouseEvent)  { if (e.isPopupTrigger) showContextMenu(e) }
+                override fun mouseReleased(e: MouseEvent) { if (e.isPopupTrigger) showContextMenu(e) }
+                override fun mouseEntered(e: MouseEvent) {
+                    isOpaque = true
+                    background = ROW_HOVER_COLOR
+                    repaint()
+                }
+                override fun mouseExited(e: MouseEvent) {
+                    isOpaque = false
+                    repaint()
+                }
+
+                private fun showContextMenu(e: MouseEvent) {
+                    buildWorktreeContextMenu(wt).show(e.component, e.x, e.y)
+                }
+            })
         }
 
         // ── Left: path directory name + branch ────────────────────────────────
@@ -211,6 +226,33 @@ class WorktreeListPanel(
         row.add(rightFlow, BorderLayout.EAST)
 
         return row
+    }
+
+    // -------------------------------------------------------------------------
+    // Context menu
+    // -------------------------------------------------------------------------
+
+    /**
+     * Builds a right-click popup for [wt] containing "Open in New Window" and
+     * "Open in Terminal" items.  Items are omitted when their respective callback
+     * is not provided, so the menu is never shown empty.
+     */
+    private fun buildWorktreeContextMenu(wt: Worktree): JPopupMenu {
+        val popup = JPopupMenu()
+
+        onOpenInNewWindow?.let { callback ->
+            val item = JMenuItem("Open in New Window")
+            item.addActionListener { callback(wt) }
+            popup.add(item)
+        }
+
+        onOpenInTerminal?.let { callback ->
+            val item = JMenuItem("Open in Terminal")
+            item.addActionListener { callback(wt) }
+            popup.add(item)
+        }
+
+        return popup
     }
 
     // -------------------------------------------------------------------------

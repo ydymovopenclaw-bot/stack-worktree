@@ -6,6 +6,12 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>Git4Idea</depends>
+    <!--
+      Terminal plugin: optional — the OpenInTerminalAction is loaded only when this
+      plugin is present (registered in terminal-support.xml).  IDEA ships with the
+      Terminal plugin bundled, so this is absent only in very stripped-down builds.
+    -->
+    <depends optional="true" config-file="terminal-support.xml">org.jetbrains.plugins.terminal</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
@@ -82,11 +88,21 @@
                 description="Create a new branch stack"
                 icon="AllIcons.General.Add"/>
 
+        <!-- S4.3: Open worktree in new IDE window -->
+        <action id="StackWorktree.OpenInNewWindow"
+                class="com.github.ydymovopenclawbot.stackworktree.actions.OpenInNewWindowAction"
+                text="Open in New Window"
+                description="Open this worktree in a new IDE window (focuses existing window if already open)"/>
+
         <!--
           Note: Track Branch and Untrack Branch are built programmatically inside
           StacksTabFactory's JPopupMenu and do not have standalone AnAction classes.
           Registration here for keyboard-shortcut / Find Action access is deferred
           to a future task.
+        -->
+        <!--
+          Note: OpenInTerminalAction is registered in terminal-support.xml so it is
+          loaded only when the Terminal plugin is present.
         -->
     </actions>
 

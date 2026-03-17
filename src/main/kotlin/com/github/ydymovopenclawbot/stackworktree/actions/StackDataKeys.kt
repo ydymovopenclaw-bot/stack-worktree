@@ -1,5 +1,6 @@
 package com.github.ydymovopenclawbot.stackworktree.actions
 
+import com.github.ydymovopenclawbot.stackworktree.git.Worktree
 import com.intellij.openapi.actionSystem.DataKey
 
 /**
@@ -21,4 +22,13 @@ object StackDataKeys {
      */
     val SELECTED_BRANCH_NAME: DataKey<String> =
         DataKey.create("stackworktree.selectedBranchName")
+
+    /**
+     * The [Worktree] whose row is currently selected / right-clicked in the
+     * Stacks panel (either the graph node or the worktree list).
+     * `null` / absent when no worktree row is focused or the selected branch
+     * has no linked worktree.
+     */
+    val SELECTED_WORKTREE: DataKey<Worktree> =
+        DataKey.create("stackworktree.selectedWorktree")
 }
