@@ -83,6 +83,10 @@ class OpsLayerImplTest {
             }
         }
 
+        override fun checkoutNewBranch(branch: String) = unsupported()
+        override fun stageAll()                         = unsupported()
+        override fun commit(message: String)            = unsupported()
+
         private fun unsupported(): Nothing = throw UnsupportedOperationException()
     }
 
