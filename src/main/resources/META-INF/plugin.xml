@@ -42,7 +42,10 @@
             id="com.github.ydymovopenclawbot.stackworktree.StackStatusBarWidget"
             implementation="com.github.ydymovopenclawbot.stackworktree.ui.StackStatusBarWidgetFactory"
             order="after git"/>
+        <projectService
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.state.StackStateService"/>
         <notificationGroup id="StackTree" displayType="BALLOON" key="stacktree.notification.group"/>
+        <notificationGroup id="StackWorktree" displayType="BALLOON"/>
     </extensions>
 
     <actions>
@@ -52,4 +55,10 @@
                 description="Create a new branch stack"
                 icon="AllIcons.General.Add"/>
     </actions>
+
+    <!--
+        Note: AddBranchToStackAction is constructed programmatically by StacksTabFactory and
+        is accessible only via the stack graph right-click context menu.  Registration in
+        <actions> for keyboard-shortcut / Find Action access is deferred to a future task.
+    -->
 </idea-plugin>

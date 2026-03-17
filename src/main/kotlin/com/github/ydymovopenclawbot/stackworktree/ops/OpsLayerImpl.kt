@@ -8,6 +8,8 @@ import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
 import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackStateStore
+import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
+import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import git4idea.GitUtil
@@ -205,6 +207,69 @@ class OpsLayerImpl(
     }
 
     // -------------------------------------------------------------------------
+    // Add branch to stack
+    // -------------------------------------------------------------------------
+
+    /**
+     * Creates a new branch on top of [parentNode] and registers it in the stack graph.
+     *
+     * Sequence:
+     * 1. `git checkout -b <newBranch>` **or** `git worktree add <worktreePath> <newBranch>`
+     *    depending on [createWorktree].
+     * 2. If [commitMessage] is non-blank: `git add -A && git commit -m <commitMessage>`.
+     * 3. Records branch→parent (and optional worktree path) in [StackStateService]
+     *    for lightweight, restart-safe lookups.
+     * 4. Writes the updated [StackState] to `refs/stacktree/state` via [StateStorage]
+     *    so [com.github.ydymovopenclawbot.stackworktree.ui.StacksTabFactory.performRefresh]
+     *    displays the new branch with accurate ahead/behind counts on the next refresh.
+     * 5. Returns a [StackNodeData] representing the new node.
+     *
+     * @throws com.github.ydymovopenclawbot.stackworktree.git.BranchOperationException
+     *   if a git command fails (e.g. branch already exists, nothing to commit).
+     */
+    override fun addBranchToStack(
+        parentNode: StackNodeData,
+        newBranch: String,
+        commitMessage: String?,
+        createWorktree: Boolean,
+        worktreePath: String?,
+    ): StackNodeData {
+        val git = gitLayer()
+        val store = stateStore()
+
+        // Step 1 — create branch
+        if (createWorktree) {
+            requireNotNull(worktreePath) { "worktreePath must be non-null when createWorktree=true" }
+            git.worktreeAdd(worktreePath, newBranch)
+        } else {
+            git.checkoutNewBranch(newBranch)
+        }
+
+        // Step 2 — optional commit
+        if (!commitMessage.isNullOrBlank()) {
+            git.stageAll()
+            git.commit(commitMessage)
+        }
+
+        // Step 3 — XML persistence (quick lookup, survives IDE restart)
+        project.stackStateService().recordBranch(
+            branch       = newBranch,
+            parentBranch = parentNode.branchName,
+            worktreePath = worktreePath,
+        )
+
+        // Step 4 — git-object persistence (feeds the full refresh pipeline)
+        persistToStateStorage(store, newBranch, parentNode.branchName, worktreePath)
+
+        // Step 5 — return view-model for the new node
+        return StackNodeData(
+            id         = newBranch,
+            branchName = newBranch,
+            parentId   = parentNode.id,
+        )
+    }
+
+    // -------------------------------------------------------------------------
     // Rebase cascade
     // -------------------------------------------------------------------------
 
@@ -299,6 +364,60 @@ class OpsLayerImpl(
     }
 
     // -------------------------------------------------------------------------
+    // State builders
+    // -------------------------------------------------------------------------
+
+    /** Builds the updated [StackState] for an "insert above" operation. */
+    private fun buildStateForInsertAbove(
+        original: StackState,
+        targetBranch: String,
+        newBranchName: String,
+        oldParent: String?,
+    ): StackState {
+        val newNode = BranchNode(name = newBranchName, parent = oldParent, children = listOf(targetBranch))
+        val updatedTarget = (original.branches[targetBranch] ?: BranchNode(name = targetBranch, parent = null))
+            .copy(parent = newBranchName)
+        val updatedOldParent = oldParent?.let { p ->
+            original.branches[p]?.let { node ->
+                node.copy(children = node.children.map { if (it == targetBranch) newBranchName else it })
+            }
+        }
+
+        return original.copy(
+            branches = buildMap {
+                putAll(original.branches)
+                put(newBranchName, newNode)
+                put(targetBranch, updatedTarget)
+                if (updatedOldParent != null && oldParent != null) put(oldParent, updatedOldParent)
+            }
+        )
+    }
+
+    /** Builds the updated [StackState] for an "insert below" operation. */
+    private fun buildStateForInsertBelow(
+        original: StackState,
+        targetBranch: String,
+        newBranchName: String,
+        children: List<String>,
+    ): StackState {
+        val newNode = BranchNode(name = newBranchName, parent = targetBranch, children = children)
+        val updatedTarget = (original.branches[targetBranch] ?: BranchNode(name = targetBranch, parent = null))
+            .copy(children = listOf(newBranchName))
+        val updatedChildren = children.mapNotNull { child ->
+            original.branches[child]?.copy(parent = newBranchName)?.let { child to it }
+        }.toMap()
+
+        return original.copy(
+            branches = buildMap {
+                putAll(original.branches)
+                put(newBranchName, newNode)
+                put(targetBranch, updatedTarget)
+                putAll(updatedChildren)
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
     // Utility
     // -------------------------------------------------------------------------
 
@@ -323,5 +442,44 @@ class OpsLayerImpl(
         require(!git.branchExists(branchName)) {
             "Branch '$branchName' already exists as a local git branch"
         }
+    }
+
+    /**
+     * Writes the new branch relationship to `refs/stacktree/state`.
+     *
+     * If no state exists yet, bootstraps a minimal [StackState] with [parentBranch]
+     * as the trunk.  Also updates the parent's [BranchNode.children] list so the
+     * graph renders edges correctly.
+     */
+    private fun persistToStateStorage(
+        store: StackStateStore,
+        newBranch: String,
+        parentBranch: String,
+        worktreePath: String?,
+    ) {
+        val current = store.read()
+
+        val newBranchNode = BranchNode(name = newBranch, parent = parentBranch, worktreePath = worktreePath)
+        val updatedParent = current?.branches?.get(parentBranch)
+            ?.let { it.copy(children = it.children + newBranch) }
+
+        val baseBranches = current?.branches ?: emptyMap()
+        val newBranches = buildMap {
+            putAll(baseBranches)
+            put(newBranch, newBranchNode)
+            if (updatedParent != null) put(parentBranch, updatedParent)
+            // Ensure the parent appears in the graph even if it was not previously tracked.
+            if (parentBranch !in baseBranches) {
+                put(parentBranch, BranchNode(name = parentBranch, parent = null))
+            }
+        }
+
+        val newState = current?.copy(branches = newBranches)
+            ?: StackState(
+                repoConfig = RepoConfig(trunk = parentBranch, remote = "origin"),
+                branches   = newBranches,
+            )
+
+        store.write(newState)
     }
 }

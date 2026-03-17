@@ -14,6 +14,7 @@ import java.awt.geom.Ellipse2D
 import java.awt.geom.Rectangle2D
 import java.awt.geom.RoundRectangle2D
 import javax.swing.JPanel
+import javax.swing.SwingUtilities
 
 /**
  * Custom Swing panel that renders a stack graph using Java2D.
@@ -47,6 +48,14 @@ class StackGraphPanel : JPanel() {
     /** Invoked on the EDT when the user double-clicks a node. */
     var onNodeNavigated: ((StackNodeData) -> Unit)? = null
 
+    /**
+     * Invoked on the EDT when the user right-clicks a node.
+     *
+     * The [MouseEvent] is passed so that callers can anchor a [javax.swing.JPopupMenu]
+     * at the correct screen position via `menu.show(e.component, e.x, e.y)`.
+     */
+    var onNodeContextMenu: ((node: StackNodeData, event: MouseEvent) -> Unit)? = null
+
     // ------------------------------------------------------------------
     // Internal state
     // ------------------------------------------------------------------
@@ -69,6 +78,9 @@ class StackGraphPanel : JPanel() {
 
         addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
+                // Right-click is handled by mousePressed/mouseReleased for cross-platform
+                // popup-trigger correctness; skip it here to avoid double invocation.
+                if (SwingUtilities.isRightMouseButton(e)) return
                 val hit = hitTest(e.x, e.y) ?: return
                 when (e.clickCount) {
                     1 -> {
@@ -78,6 +90,24 @@ class StackGraphPanel : JPanel() {
                     }
                     2 -> onNodeNavigated?.invoke(hit)
                 }
+            }
+
+            // macOS fires the popup trigger on mousePressed; Windows/Linux on mouseReleased.
+            // Handling both — guarded by isPopupTrigger — is the standard Swing idiom for
+            // reliable cross-platform context menus.
+            override fun mousePressed(e: MouseEvent) {
+                if (e.isPopupTrigger) handlePopup(e)
+            }
+
+            override fun mouseReleased(e: MouseEvent) {
+                if (e.isPopupTrigger) handlePopup(e)
+            }
+
+            private fun handlePopup(e: MouseEvent) {
+                val hit = hitTest(e.x, e.y) ?: return
+                selectedNodeId = hit.id
+                repaint()
+                onNodeContextMenu?.invoke(hit, e)
             }
         })
     }
