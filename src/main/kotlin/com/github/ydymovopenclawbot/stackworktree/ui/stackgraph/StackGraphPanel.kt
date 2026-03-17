@@ -271,16 +271,19 @@ class StackGraphPanel : JPanel() {
         g2.font  = labelFont
         g2.color = StackGraphColors.NODE_TEXT
 
-        val fm        = g2.getFontMetrics(labelFont)
-        val badgeArea = if (node.ahead > 0 || node.behind > 0) 60 else 0
+        val fm             = g2.getFontMetrics(labelFont)
+        val aheadBehindArea = if (node.ahead > 0 || node.behind > 0) 60 else 0
+        val worktreeArea    = if (node.hasWorktree) 26 else 0
+        val badgeArea       = aheadBehindArea + worktreeArea
         val maxLabelW = (rect.width - (textStartX - rect.x) - 10 - badgeArea).toInt()
         val label     = truncate(node.branchName, fm, maxLabelW)
 
         val labelY = (rect.y + (rect.height + fm.ascent - fm.descent) / 2).toInt()
         g2.drawString(label, textStartX.toInt(), labelY)
 
-        // Ahead / behind badges
-        if (node.ahead > 0 || node.behind > 0) {
+        // Right-side badges (behind, ahead, worktree) — painted right-to-left
+        val hasBadges = node.ahead > 0 || node.behind > 0 || node.hasWorktree
+        if (hasBadges) {
             var badgeX = (rect.maxX - 8).toInt()
             val badgeFont = JBUI.Fonts.label(10f).deriveFont(Font.BOLD)
             g2.font = badgeFont
@@ -293,8 +296,14 @@ class StackGraphPanel : JPanel() {
                 badgeX -= 4
             }
             if (node.ahead > 0) {
-                paintBadge(g2, bfm, "↑${node.ahead}", badgeX, badgeCy.toInt(),
+                badgeX = paintBadge(g2, bfm, "↑${node.ahead}", badgeX, badgeCy.toInt(),
                     StackGraphColors.BADGE_AHEAD_BG, StackGraphColors.BADGE_AHEAD_TEXT)
+                badgeX -= 4
+            }
+            if (node.hasWorktree) {
+                // "W" badge — indicates a linked git worktree is bound to this branch
+                paintBadge(g2, bfm, "W", badgeX, badgeCy.toInt(),
+                    StackGraphColors.BADGE_WORKTREE_BG, StackGraphColors.BADGE_WORKTREE_TEXT)
             }
         }
     }

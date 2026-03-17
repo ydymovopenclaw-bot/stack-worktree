@@ -32,6 +32,8 @@ enum class HealthStatus {
  * @param behind         Commits this branch is behind its parent.
  * @param healthStatus   Visual health indicator controlling border colour.
  * @param isCurrentBranch Whether this node represents the currently checked-out branch.
+ * @param hasWorktree    Whether a linked worktree is bound to this branch; renders a
+ *                       folder-badge indicator in the graph node when `true`.
  */
 data class StackNodeData(
     val id: String,
@@ -41,6 +43,7 @@ data class StackNodeData(
     val behind: Int = 0,
     val healthStatus: HealthStatus = HealthStatus.CLEAN,
     val isCurrentBranch: Boolean = false,
+    val hasWorktree: Boolean = false,
 )
 
 /**

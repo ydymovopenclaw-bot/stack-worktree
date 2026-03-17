@@ -35,6 +35,8 @@ class StackStateService : PersistentStateComponent<StackStateService.PersistStat
     class PersistState {
         var branchParents: MutableMap<String, String> = mutableMapOf()  // child  → parent branch
         var worktreePaths: MutableMap<String, String> = mutableMapOf()  // branch → absolute worktree path
+        /** Configurable base directory for worktree creation. Null = use project-derived default. */
+        var worktreeBasePath: String? = null
     }
 
     private val lock  = Any()
@@ -45,8 +47,9 @@ class StackStateService : PersistentStateComponent<StackStateService.PersistStat
     /** Returns a defensive copy of current state for serialisation. */
     override fun getState(): PersistState = synchronized(lock) {
         PersistState().also {
-            it.branchParents = state.branchParents.toMutableMap()
-            it.worktreePaths = state.worktreePaths.toMutableMap()
+            it.branchParents    = state.branchParents.toMutableMap()
+            it.worktreePaths    = state.worktreePaths.toMutableMap()
+            it.worktreeBasePath = state.worktreeBasePath
         }
     }
 
@@ -70,6 +73,23 @@ class StackStateService : PersistentStateComponent<StackStateService.PersistStat
         }
     }
 
+    /**
+     * Binds [branch] to [path] without touching the parent mapping.
+     *
+     * Use this when the branch-parent relationship is already recorded and only
+     * the worktree path needs to be added (e.g. after [WorktreeOps.createWorktreeForBranch]).
+     */
+    fun updateWorktreePath(branch: String, path: String): Unit =
+        synchronized(lock) { state.worktreePaths[branch] = path }
+
+    /** Removes the worktree binding for [branch]. No-op if no binding exists. */
+    fun clearWorktreePath(branch: String): Unit =
+        synchronized(lock) { state.worktreePaths.remove(branch) }
+
+    /** Updates the configurable base directory used for default worktree path resolution. */
+    fun setWorktreeBasePath(path: String): Unit =
+        synchronized(lock) { state.worktreeBasePath = path }
+
     // ── Read API ──────────────────────────────────────────────────────────────
 
     /** Returns the parent branch recorded for [branch], or `null` if unknown. */
@@ -88,6 +108,13 @@ class StackStateService : PersistentStateComponent<StackStateService.PersistStat
     /** Returns the worktree path recorded for [branch], or `null` if not bound. */
     fun getWorktreePath(branch: String): String? =
         synchronized(lock) { state.worktreePaths[branch] }
+
+    /**
+     * Returns the configurable worktree base path, or `null` when the project-derived
+     * default should be used (`<projectDir>/../<projectName>-worktrees`).
+     */
+    fun getWorktreeBasePath(): String? =
+        synchronized(lock) { state.worktreeBasePath }
 }
 
 /** Convenience extension for accessing the service from a [Project]. */

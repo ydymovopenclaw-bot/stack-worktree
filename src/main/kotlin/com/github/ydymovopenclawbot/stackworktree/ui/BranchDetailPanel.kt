@@ -24,11 +24,21 @@ import javax.swing.JButton
  * - Ahead / behind count relative to the parent
  * - Commit list (git log --oneline style)
  * - Worktree path with an "Open" button, or "Not bound"
- * - Stubbed action buttons: Rebase, Submit PR, Create Worktree (disabled until implemented)
+ * - Action buttons: Rebase, Submit PR, Create Worktree / Remove Worktree
  *
  * Call [showNode] to populate the panel, [clearSelection] to reset it.
+ *
+ * Set [onCreateWorktree] / [onRemoveWorktree] to react to worktree button clicks.
  */
 internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
+
+    // ── Callbacks ─────────────────────────────────────────────────────────────
+
+    /** Invoked on the EDT when the user clicks "Create Worktree". */
+    var onCreateWorktree: ((branchName: String) -> Unit)? = null
+
+    /** Invoked on the EDT when the user clicks "Remove Worktree". */
+    var onRemoveWorktree: ((branchName: String) -> Unit)? = null
 
     // ── Metadata labels ───────────────────────────────────────────────────────
 
@@ -49,10 +59,11 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
     /** Opens the worktree directory in the system file manager. */
     private val openButton = JButton("Open").apply { isEnabled = false }
 
-    /** Stubbed action buttons — disabled until the relevant tasks are implemented. */
-    private val rebaseButton        = JButton("Rebase").apply        { isEnabled = false }
-    private val submitPrButton      = JButton("Submit PR").apply     { isEnabled = false }
+    /** Stubbed action buttons — Rebase/Submit PR remain disabled until implemented. */
+    private val rebaseButton         = JButton("Rebase").apply    { isEnabled = false }
+    private val submitPrButton       = JButton("Submit PR").apply { isEnabled = false }
     private val createWorktreeButton = JButton("Create Worktree").apply { isEnabled = false }
+    private val removeWorktreeButton = JButton("Remove Worktree").apply { isEnabled = false }
 
     init {
         add(buildForm(), BorderLayout.CENTER)
@@ -62,8 +73,8 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
 
     /** Populates all fields from [node]. */
     fun showNode(node: StackNode) {
-        branchNameLabel.text = node.branchName
-        parentLabel.text     = node.parentBranch ?: "(none)"
+        branchNameLabel.text  = node.branchName
+        parentLabel.text      = node.parentBranch ?: "(none)"
         aheadBehindLabel.text = "+${node.aheadCount} / -${node.behindCount}"
 
         commitModel.clear()
@@ -79,6 +90,19 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
             worktreeLabel.text = NOT_BOUND
             openButton.isEnabled = false
         }
+
+        // Wire Create / Remove worktree buttons — only one is enabled at a time.
+        createWorktreeButton.actionListeners.forEach { createWorktreeButton.removeActionListener(it) }
+        removeWorktreeButton.actionListeners.forEach { removeWorktreeButton.removeActionListener(it) }
+        if (node.worktreePath == null) {
+            createWorktreeButton.isEnabled = true
+            removeWorktreeButton.isEnabled = false
+            createWorktreeButton.addActionListener { onCreateWorktree?.invoke(node.branchName) }
+        } else {
+            createWorktreeButton.isEnabled = false
+            removeWorktreeButton.isEnabled = true
+            removeWorktreeButton.addActionListener { onRemoveWorktree?.invoke(node.branchName) }
+        }
     }
 
     /** Resets all fields to their empty/placeholder state. */
@@ -89,6 +113,10 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
         worktreeLabel.text    = NOT_BOUND
         openButton.isEnabled  = false
         openButton.actionListeners.forEach { openButton.removeActionListener(it) }
+        createWorktreeButton.isEnabled = false
+        createWorktreeButton.actionListeners.forEach { createWorktreeButton.removeActionListener(it) }
+        removeWorktreeButton.isEnabled = false
+        removeWorktreeButton.actionListeners.forEach { removeWorktreeButton.removeActionListener(it) }
         commitModel.clear()
     }
 
@@ -156,6 +184,7 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
             add(rebaseButton)
             add(submitPrButton)
             add(createWorktreeButton)
+            add(removeWorktreeButton)
         }
         panel.add(actionsRow, GridBagConstraints().apply {
             gridx = 0; gridy = row; gridwidth = 2
