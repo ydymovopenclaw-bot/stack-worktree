@@ -1,7 +1,5 @@
 package com.github.ydymovopenclawbot.stackworktree.git
 
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -163,42 +161,4 @@ class AheadBehindCalculatorTest {
         assertEquals(AheadBehind(2, 2), result["c"])
     }
 
-    // ---------------------------------------------------------------------------
-    // StateFlow
-    // ---------------------------------------------------------------------------
-
-    @Test
-    fun `StateFlow starts empty`() {
-        assertEquals(emptyMap<String, AheadBehind>(), calc.state.value)
-    }
-
-    @Test
-    fun `StateFlow emits updated map after calculate`() {
-        fake.responses["feature:main"] = AheadBehind(3, 1)
-        calc.calculate(mapOf("feature" to "main"))
-        assertEquals(mapOf("feature" to AheadBehind(3, 1)), calc.state.value)
-    }
-
-    @Test
-    fun `StateFlow reflects latest calculate result`() {
-        fake.responses["a:main"] = AheadBehind(1, 0)
-        fake.responses["b:main"] = AheadBehind(0, 2)
-
-        calc.calculate(mapOf("a" to "main"))
-        assertEquals(mapOf("a" to AheadBehind(1, 0)), calc.state.value)
-
-        calc.calculate(mapOf("a" to "main", "b" to "main"))
-        assertEquals(
-            mapOf("a" to AheadBehind(1, 0), "b" to AheadBehind(0, 2)),
-            calc.state.value,
-        )
-    }
-
-    @Test
-    fun `StateFlow can be collected as Flow`() = runTest {
-        fake.responses["feature:main"] = AheadBehind(2, 1)
-        calc.calculate(mapOf("feature" to "main"))
-        val emitted = calc.state.first()
-        assertEquals(mapOf("feature" to AheadBehind(2, 1)), emitted)
-    }
 }

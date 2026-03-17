@@ -17,5 +17,9 @@
             tabName="Stacks"
             className="com.github.ydymovopenclawbot.stackworktree.ui.StacksTabFactory"
             predicateClassName="com.github.ydymovopenclawbot.stackworktree.ui.StacksTabVisibilityPredicate"/>
+        <statusBarWidgetFactory
+            id="com.github.ydymovopenclawbot.stackworktree.StackStatusBarWidget"
+            implementation="com.github.ydymovopenclawbot.stackworktree.ui.StackStatusBarWidgetFactory"
+            order="after git"/>
     </extensions>
 </idea-plugin>
