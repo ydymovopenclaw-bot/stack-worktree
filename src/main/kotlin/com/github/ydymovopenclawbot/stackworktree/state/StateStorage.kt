@@ -40,7 +40,7 @@ class StateStorage(
      * Reads and deserializes the [StackState] from [REF], or returns `null` if the ref
      * does not exist yet (i.e. StackTree has never written state to this repository).
      */
-    fun read(): StackState? {
+    override fun read(): StackState? {
         if (!exists()) return null
 
         // commit → tree SHA
@@ -72,7 +72,7 @@ class StateStorage(
      *    parent when the ref already exists.
      * 4. Advance [REF] to the new commit via `git update-ref`.
      */
-    fun write(state: StackState) {
+    override fun write(state: StackState) {
         val jsonStr = JSON.encodeToString(state)
 
         // Step 1 — blob
