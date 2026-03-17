@@ -1,6 +1,9 @@
 package com.github.ydymovopenclawbot.stackworktree.git
 
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Computes and caches ahead/behind counts for branches relative to their parents.
@@ -27,6 +30,17 @@ class AheadBehindCalculator(
     // ConcurrentHashMap for safe concurrent reads; synchronized blocks guard the
     // read-then-write sequences to avoid duplicate git calls under contention.
     private val cache = ConcurrentHashMap<String, CachedEntry>()
+
+    private val _state = MutableStateFlow<Map<String, AheadBehind>>(emptyMap())
+
+    /**
+     * Observable snapshot of the most recent [calculate] result.
+     *
+     * Starts as an empty map and is updated synchronously at the end of every
+     * successful [calculate] call, so collectors always see a consistent view of
+     * the last full computation.
+     */
+    val state: StateFlow<Map<String, AheadBehind>> = _state.asStateFlow()
 
     /**
      * Computes ahead/behind for each entry in [branches], where the map key is the branch
@@ -58,6 +72,7 @@ class AheadBehindCalculator(
             result[branch] = ab
         }
 
+        _state.value = result.toMap()
         return result
     }
 
