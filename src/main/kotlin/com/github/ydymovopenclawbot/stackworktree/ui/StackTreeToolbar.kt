@@ -1,7 +1,7 @@
 package com.github.ydymovopenclawbot.stackworktree.ui
 
+import com.github.ydymovopenclawbot.stackworktree.actions.NewStackAction
 import com.github.ydymovopenclawbot.stackworktree.ui.actions.AddBranchAction
-import com.github.ydymovopenclawbot.stackworktree.ui.actions.NewStackAction
 import com.github.ydymovopenclawbot.stackworktree.ui.actions.RefreshStacksAction
 import com.github.ydymovopenclawbot.stackworktree.ui.actions.RestackAction
 import com.github.ydymovopenclawbot.stackworktree.ui.actions.SubmitAction
