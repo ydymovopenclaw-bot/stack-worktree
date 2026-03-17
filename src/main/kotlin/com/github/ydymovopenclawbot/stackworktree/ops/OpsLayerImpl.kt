@@ -28,6 +28,11 @@ class OpsLayerImpl(
     private val stateStoreOverride: StackStateStore? = null,
 ) : OpsLayer {
 
+    companion object {
+        /** Creates a production [OpsLayer] wired to the first git repository in [project]. */
+        fun forProject(project: Project): OpsLayer = OpsLayerImpl(project)
+    }
+
     // -------------------------------------------------------------------------
     // Lazy dependencies (re-resolved on every call unless overridden)
     // -------------------------------------------------------------------------
@@ -116,14 +121,18 @@ class OpsLayerImpl(
             }
 
             // Cascade: rebase descendants of targetBranch in BFS order.
-            val cascadeOk = rebaseDescendants(git, updatedState, targetBranch, oldTargetTip, newBranchName)
-            if (cascadeOk == null) {
-                // rebaseDescendants already rolled back children and deleted newBranchName.
-                // Also restore targetBranch to its pre-rebase position.
-                runCatching { git.resetBranch(targetBranch, oldTargetTip) }
-                    .onFailure {
-                        LOG.warn("rollback: could not restore '$targetBranch' — manual cleanup may be needed: ${it.message}")
-                    }
+            val cascadeResult = rebaseDescendants(git, updatedState, targetBranch, oldTargetTip)
+            if (cascadeResult is CascadeResult.Aborted) {
+                // Children have been rolled back by rebaseDescendants; clean up the two
+                // remaining mutations from this operation: newBranchName and targetBranch.
+                val deleteOk = rollbackBranchCreation(git, newBranchName)
+                val resetOk = runCatching { git.resetBranch(targetBranch, oldTargetTip) }.isSuccess
+                if (!deleteOk || !resetOk) {
+                    LOG.warn(
+                        "rollback: partial failure (deleteNewBranch=$deleteOk, resetTarget=$resetOk)" +
+                            " — repository may need manual cleanup"
+                    )
+                }
                 return
             }
         }
@@ -208,20 +217,21 @@ class OpsLayerImpl(
      * the child's own commits (not its parent's) are replayed.  These SHAs are captured
      * before each rebase and stored in [oldTips] for use by deeper levels.
      *
-     * @param oldRootTip    SHA of [rootBranch] **before** it was rebased. Seeded into [oldTips]
-     *                      so first-level children can supply the correct upstream.
-     * @param createdBranch The new branch created for this operation; deleted on rollback.
+     * Rollback of the two outer mutations ([rootBranch] itself and the newly created branch)
+     * is the **caller's** responsibility; this function only rolls back the children it has
+     * already moved.
      *
-     * @return `true` on full success; `null` if any rebase aborted (best-effort child rollback
-     *         and [createdBranch] deletion are performed before returning).
+     * @param oldRootTip SHA of [rootBranch] **before** it was rebased. Seeded into [oldTips]
+     *                   so first-level children can supply the correct upstream.
+     * @return [CascadeResult.Success] on full success; [CascadeResult.Aborted] if any rebase
+     *         was aborted (best-effort child rollback is performed before returning).
      */
     private fun rebaseDescendants(
         git: GitLayer,
         state: StackState,
         rootBranch: String,
         oldRootTip: String,
-        createdBranch: String,
-    ): Boolean? {
+    ): CascadeResult {
         // Maps branchName → tip SHA captured before that branch was rebased.
         val oldTips = mutableMapOf(rootBranch to oldRootTip)
 
@@ -255,25 +265,36 @@ class OpsLayerImpl(
                                 LOG.warn("rollback: could not restore '${done.branch}' — manual cleanup may be needed: ${it.message}")
                             }
                     }
-                    rollbackBranchCreation(git, createdBranch)
-                    return null
+                    return CascadeResult.Aborted
                 }
             }
         }
-        return true
+        return CascadeResult.Success
+    }
+
+    /** Result of a [rebaseDescendants] call. */
+    private sealed class CascadeResult {
+        object Success : CascadeResult()
+        object Aborted : CascadeResult()
     }
 
     // -------------------------------------------------------------------------
     // Rollback helpers
     // -------------------------------------------------------------------------
 
-    /** Force-deletes [branchName] created during the operation (best-effort). */
-    private fun rollbackBranchCreation(git: GitLayer, branchName: String) {
-        try {
+    /**
+     * Force-deletes [branchName] created during the operation (best-effort).
+     *
+     * @return `true` if the deletion succeeded; `false` if it failed (already logged).
+     */
+    private fun rollbackBranchCreation(git: GitLayer, branchName: String): Boolean {
+        return try {
             git.deleteBranch(branchName)
             LOG.info("rollback: deleted '$branchName'")
+            true
         } catch (e: Exception) {
             LOG.warn("rollback: could not delete '$branchName': ${e.message}")
+            false
         }
     }
 

@@ -1,11 +1,14 @@
 package com.github.ydymovopenclawbot.stackworktree.git
 
+import com.intellij.openapi.progress.EmptyProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
-import git4idea.merge.GitConflictResolver
+import git4idea.rebase.GitRebaser
+import git4idea.update.GitUpdateResult
 
 /**
  * Production [GitLayer] implementation that shells out to `git worktree` via
@@ -116,42 +119,31 @@ class GitLayerImpl(
     }
 
     /**
-     * Runs `git rebase --onto <newBase> <upstream> <branch>`.
+     * Runs `git rebase --onto <newBase> <upstream> <branch>` via [GitRebaser].
      *
-     * When git detects conflicts it stops with a non-zero exit code.  We then open
-     * IntelliJ's [GitConflictResolver] which shows the three-pane merge dialog for each
-     * conflicted file.  If the user resolves all conflicts we continue with
-     * `git rebase --continue`; if they cancel we abort and return [RebaseResult.Aborted].
+     * Delegating to [GitRebaser] is critical for correct IDE integration: it loops over
+     * every conflicting commit in turn, opening IntelliJ's three-pane merge dialog for each
+     * one, and only advances to the next commit once the current conflicts are fully resolved.
+     * A manual [git4idea.merge.GitConflictResolver] approach only handles one round of
+     * conflict resolution and then calls `--continue`, which aborts the entire rebase if
+     * a subsequent commit also has conflicts.
+     *
+     * The current thread's [com.intellij.openapi.progress.ProgressIndicator] is used when
+     * available (e.g. when called from a [com.intellij.openapi.progress.Task.Backgroundable]);
+     * an [EmptyProgressIndicator] is used as a safe fallback otherwise.
      */
     override fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.REBASE).also {
-            it.addParameters("--onto", newBase, upstream, branch)
-        }
-        val result = Git.getInstance().runCommand(handler)
-        if (result.success()) return RebaseResult.Success
-
-        // Attempt conflict resolution.  GitConflictResolver.merge() opens the
-        // three-pane merge dialog for every conflicted file; if there are none it
-        // returns true immediately (e.g. a hard error case).  We then abort the
-        // rebase so the repository is left in a clean state.
-        val params = GitConflictResolver.Params(project)
-        val resolver = GitConflictResolver(project, listOf(gitRoot), params)
-        val resolved = resolver.merge()
-        if (!resolved) {
-            abortRebase()
-            return RebaseResult.Aborted("User aborted conflict resolution during rebase of '$branch' onto '$newBase'")
-        }
-
-        // All conflicts resolved — continue the rebase.
-        val continueHandler = GitLineHandler(project, gitRoot, GitCommand.REBASE).also {
-            it.addParameters("--continue")
-        }
-        val continueResult = Git.getInstance().runCommand(continueHandler)
-        return if (continueResult.success()) {
-            RebaseResult.Success
-        } else {
-            abortRebase()
-            RebaseResult.Aborted("Rebase continue failed: ${continueResult.errorOutputAsJoinedString}")
+        val indicator = ProgressManager.getInstance().progressIndicator ?: EmptyProgressIndicator()
+        val rebaser = GitRebaser(project, Git.getInstance(), indicator)
+        val result = rebaser.rebase(gitRoot, listOf("--onto", newBase, upstream, branch))
+        return when (result) {
+            GitUpdateResult.SUCCESS,
+            GitUpdateResult.SUCCESS_WITH_RESOLVED_CONFLICTS,
+            GitUpdateResult.NOTHING_TO_UPDATE -> RebaseResult.Success
+            GitUpdateResult.CANCEL ->
+                RebaseResult.Aborted("User cancelled rebase of '$branch' onto '$newBase'")
+            else ->
+                RebaseResult.Aborted("Rebase of '$branch' onto '$newBase' did not complete: $result")
         }
     }
 
@@ -172,15 +164,6 @@ class GitLayerImpl(
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    /** Runs `git rebase --abort`, swallowing errors (best-effort cleanup). */
-    private fun abortRebase() {
-        Git.getInstance().runCommand(
-            GitLineHandler(project, gitRoot, GitCommand.REBASE).also {
-                it.addParameters("--abort")
-            }
-        )
-    }
 
     /** Runs a `git worktree <params>` command, throwing on non-zero exit. */
     private fun runOrThrow(vararg params: String): List<String> {

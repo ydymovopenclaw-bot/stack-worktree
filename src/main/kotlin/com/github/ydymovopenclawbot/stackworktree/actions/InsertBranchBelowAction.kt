@@ -1,5 +1,6 @@
 package com.github.ydymovopenclawbot.stackworktree.actions
 
+import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
@@ -59,7 +60,8 @@ class InsertBranchBelowAction : AnAction() {
         object : Task.Backgroundable(project, "Inserting branch below '$targetBranch'…", true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = true
-                OpsLayerImpl(project).insertBranchBelow(targetBranch, newBranchName)
+                val ops: OpsLayer = OpsLayerImpl.forProject(project)
+                ops.insertBranchBelow(targetBranch, newBranchName)
             }
         }.queue()
     }
