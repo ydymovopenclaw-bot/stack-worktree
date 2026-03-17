@@ -3,8 +3,11 @@ package com.github.ydymovopenclawbot.stackworktree.ui.stackgraph
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
 import java.awt.Dimension
+import java.awt.Toolkit
 
 /**
  * Behavioural tests for [StackGraphPanel] that do not require a full IntelliJ Platform runtime.
@@ -15,8 +18,32 @@ import java.awt.Dimension
  *  - selection state management
  *  - preferred-size updates driven by layout results
  *  - callback wiring
+ *
+ * Tests use [StackGraphPanel.selectNode] rather than reflection to set selection state,
+ * avoiding JBR-internal side-effects that can interfere with IntelliJ's ThreadLeakTracker.
  */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class StackGraphPanelTest {
+
+    // ------------------------------------------------------------------
+    // One-time AWT warm-up
+    //
+    // IntelliJ's ThreadLeakTracker takes a per-test thread snapshot *before*
+    // each test (@BeforeEach).  On JBR 25, the first call to Toolkit.getDesktopProperty()
+    // lazily creates SystemPropertyWatcher via UNIXToolkit.initializeDesktopProperties().
+    // If that happens *during* a test, the tracker flags it as a thread leak.
+    //
+    // Running @BeforeAll (which fires before any @BeforeEach / tracker snapshot)
+    // ensures SystemPropertyWatcher is already alive when the first baseline is
+    // captured, so it never appears as a "new" thread in any test.
+    // ------------------------------------------------------------------
+
+    @BeforeAll
+    fun warmUpAwtToolkit() {
+        // Force UNIXToolkit.initializeDesktopProperties() → initSystemPropertyWatcher().
+        // getDesktopProperty() is the trigger; the exact key is unimportant.
+        runCatching { Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") }
+    }
 
     // ------------------------------------------------------------------
     // Helpers
@@ -85,13 +112,14 @@ class StackGraphPanelTest {
         val panel = StackGraphPanel()
         panel.updateGraph(StackGraphData(listOf(node("main"), node("feature", parentId = "main"))))
 
-        // Directly set selection (simulates what mouseClicked would do)
-        val field = StackGraphPanel::class.java.getDeclaredField("selectedNodeId")
-        field.isAccessible = true
-        field.set(panel, "main")
+        // Use the internal selectNode() helper to simulate a single-click selection.
+        // This avoids reflection (which can trigger JBR-internal AWT side-effects that
+        // interfere with IntelliJ's ThreadLeakTracker), while still exercising the same
+        // selection code-path as a real mouse click.
+        panel.selectNode("main")
         assertEquals("main", panel.selectedNodeId)
 
-        // A fresh updateGraph should clear the selection
+        // A fresh updateGraph should clear the selection.
         panel.updateGraph(StackGraphData(listOf(node("main"))))
         assertNull(panel.selectedNodeId)
     }
