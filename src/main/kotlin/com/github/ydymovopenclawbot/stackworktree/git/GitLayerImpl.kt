@@ -104,7 +104,7 @@ class GitLayerImpl(
     }
 
     override fun resolveCommit(branchOrRef: String): String {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.REV_PARSE).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.REV_PARSE).also {
             it.addParameters("--verify", branchOrRef)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -116,7 +116,7 @@ class GitLayerImpl(
     }
 
     override fun branchExists(branchName: String): Boolean {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
             it.addParameters("--list", branchName)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -127,7 +127,7 @@ class GitLayerImpl(
     }
 
     override fun resetBranch(branchName: String, toCommit: String) {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
             it.addParameters("-f", branchName, toCommit)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -137,7 +137,7 @@ class GitLayerImpl(
     }
 
     override fun createBranch(branchName: String, baseBranch: String) {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
             it.addParameters(branchName, baseBranch)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -147,7 +147,7 @@ class GitLayerImpl(
     }
 
     override fun deleteBranch(branchName: String) {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
             it.addParameters("-D", branchName)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -173,7 +173,7 @@ class GitLayerImpl(
     override fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult {
         val indicator = ProgressManager.getInstance().progressIndicator ?: EmptyProgressIndicator()
         val rebaser = GitRebaser(project, Git.getInstance(), indicator)
-        val result = rebaser.rebase(gitRoot, listOf("--onto", newBase, upstream, branch))
+        val result = rebaser.rebase(requireRoot(), listOf("--onto", newBase, upstream, branch))
         return when (result) {
             GitUpdateResult.SUCCESS,
             GitUpdateResult.SUCCESS_WITH_RESOLVED_CONFLICTS,
@@ -201,7 +201,7 @@ class GitLayerImpl(
 
     override fun checkoutNewBranch(branch: String) {
         val result = Git.getInstance().runCommand(
-            GitLineHandler(project, gitRoot, GitCommand.CHECKOUT).also {
+            GitLineHandler(project, requireRoot(), GitCommand.CHECKOUT).also {
                 it.addParameters("-b", branch)
             }
         )
@@ -215,7 +215,7 @@ class GitLayerImpl(
 
     override fun stageAll() {
         val result = Git.getInstance().runCommand(
-            GitLineHandler(project, gitRoot, GitCommand.ADD).also {
+            GitLineHandler(project, requireRoot(), GitCommand.ADD).also {
                 it.addParameters("-A")
             }
         )
@@ -229,7 +229,7 @@ class GitLayerImpl(
 
     override fun commit(message: String) {
         val result = Git.getInstance().runCommand(
-            GitLineHandler(project, gitRoot, GitCommand.COMMIT).also {
+            GitLineHandler(project, requireRoot(), GitCommand.COMMIT).also {
                 it.addParameters("-m", message)
             }
         )
