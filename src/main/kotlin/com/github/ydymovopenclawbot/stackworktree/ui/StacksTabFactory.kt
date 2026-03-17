@@ -5,6 +5,7 @@ import com.github.ydymovopenclawbot.stackworktree.git.BranchDetailService
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl
 import com.github.ydymovopenclawbot.stackworktree.git.IntelliJGitRunner
 import com.github.ydymovopenclawbot.stackworktree.startup.StackGitChangeListener
+import com.github.ydymovopenclawbot.stackworktree.state.StackTreeStateListener
 import com.github.ydymovopenclawbot.stackworktree.state.StateStorage
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.HealthStatus
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphData
@@ -41,8 +42,12 @@ private val LOG = logger<StacksTabFactory>()
  * Selecting a node in the graph triggers [BranchDetailService.loadNode] on a pooled thread,
  * then updates the detail panel on the EDT.
  *
- * On [initContent] the panel subscribes to [GitRepository.GIT_REPO_CHANGE] so the graph
- * auto-refreshes on every commit, checkout, rebase, fetch, or pull.
+ * On [initContent] the panel subscribes to:
+ * - [GitRepository.GIT_REPO_CHANGE] so the graph auto-refreshes on every commit, checkout,
+ *   rebase, fetch, or pull.
+ * - [StackTreeStateListener.TOPIC] so the graph refreshes immediately after
+ *   [com.github.ydymovopenclawbot.stackworktree.actions.NewStackAction] (or any other writer)
+ *   persists new state.
  *
  * @param project Injected by the platform via [com.intellij.openapi.vcs.changes.ui.ChangesViewContentEP].
  */
@@ -127,9 +132,11 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         val toolbar = StackTreeToolbar.create("StacksTab") { performRefresh() }
         toolbar.targetComponent = graph
 
-        // Auto-refresh whenever the git repository changes (commit / checkout / rebase / …).
+        // Subscribe to both git-repo changes and explicit stack-state writes so the graph
+        // stays in sync regardless of what triggers a state change.
         connection = project.messageBus.connect().also { conn ->
             conn.subscribe(GitRepository.GIT_REPO_CHANGE, StackGitChangeListener { performRefresh() })
+            conn.subscribe(StackTreeStateListener.TOPIC, StackTreeStateListener { performRefresh() })
         }
 
         // Show current state immediately without waiting for the first git event.

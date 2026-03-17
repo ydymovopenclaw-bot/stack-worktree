@@ -21,5 +21,14 @@
             id="com.github.ydymovopenclawbot.stackworktree.StackStatusBarWidget"
             implementation="com.github.ydymovopenclawbot.stackworktree.ui.StackStatusBarWidgetFactory"
             order="after git"/>
+        <notificationGroup id="StackTree" displayType="BALLOON" key="stacktree.notification.group"/>
     </extensions>
+
+    <actions>
+        <action id="StackTree.NewStack"
+                class="com.github.ydymovopenclawbot.stackworktree.actions.NewStackAction"
+                text="New Stack"
+                description="Create a new branch stack"
+                icon="AllIcons.General.Add"/>
+    </actions>
 </idea-plugin>
