@@ -28,6 +28,13 @@ class AheadBehindCalculatorTest {
         override fun worktreeRemove(path: String) = Unit
         override fun worktreeList(): List<Worktree> = emptyList()
         override fun worktreePrune() = Unit
+        override fun createBranch(branchName: String, baseBranch: String) = Unit
+        override fun deleteBranch(branchName: String) = Unit
+        override fun resolveCommit(branchOrRef: String): String = "0000000000000000000000000000000000000000"
+        override fun branchExists(branchName: String): Boolean = false
+        override fun resetBranch(branchName: String, toCommit: String) = Unit
+        override fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult =
+            RebaseResult.Success
     }
 
     private lateinit var fake: FakeGitLayer

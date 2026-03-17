@@ -11,6 +11,9 @@ import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.HealthStatus
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphData
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphPanel
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
+import com.github.ydymovopenclawbot.stackworktree.actions.StackDataKeys
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.DataProvider
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
@@ -18,6 +21,7 @@ import com.intellij.openapi.vcs.changes.ui.ChangesViewContentProvider
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.JBSplitter
+import com.intellij.ui.PopupHandler
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.messages.MessageBusConnection
@@ -129,6 +133,10 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         }
         graph.onNodeNavigated = { node -> LOG.info("Navigate requested for: ${node.branchName}") }
 
+        // Attach the stack branch context-menu so right-clicking a node shows
+        // "Insert Branch Above" / "Insert Branch Below" etc.
+        PopupHandler.installPopupMenu(graph, "StackWorktree.StackBranchPopup", ActionPlaces.POPUP)
+
         val toolbar = StackTreeToolbar.create("StacksTab") { performRefresh() }
         toolbar.targetComponent = graph
 
@@ -152,9 +160,16 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             dividerWidth = 3
         }
 
-        return JBPanel<JBPanel<*>>(BorderLayout()).apply {
-            add(toolbar.component, BorderLayout.NORTH)
-            add(splitter, BorderLayout.CENTER)
+        return object : JBPanel<JBPanel<*>>(BorderLayout()), DataProvider {
+            init {
+                add(toolbar.component, BorderLayout.NORTH)
+                add(splitter, BorderLayout.CENTER)
+            }
+
+            override fun getData(dataId: String): Any? = when {
+                StackDataKeys.SELECTED_BRANCH_NAME.`is`(dataId) -> graph.selectedNodeId
+                else -> null
+            }
         }
     }
 
