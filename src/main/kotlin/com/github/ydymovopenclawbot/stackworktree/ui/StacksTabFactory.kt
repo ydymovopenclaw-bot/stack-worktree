@@ -22,6 +22,7 @@ import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphData
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphPanel
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
 import com.github.ydymovopenclawbot.stackworktree.actions.OpenInNewWindowAction
+import com.github.ydymovopenclawbot.stackworktree.actions.OpenInTerminalAction
 import com.github.ydymovopenclawbot.stackworktree.actions.StackDataKeys
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -635,8 +636,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
      */
     private fun openInTerminalIfAvailable(wt: Worktree) {
         try {
-            com.github.ydymovopenclawbot.stackworktree.actions.OpenInTerminalAction
-                .perform(project, wt)
+            OpenInTerminalAction.perform(project, wt)
         } catch (_: NoClassDefFoundError) {
             LOG.warn("Terminal plugin not available; cannot open worktree in terminal")
         }

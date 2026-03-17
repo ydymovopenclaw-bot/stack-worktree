@@ -10,5 +10,11 @@
                 class="com.github.ydymovopenclawbot.stackworktree.actions.OpenInTerminalAction"
                 text="Open in Terminal"
                 description="Open a terminal tab pre-cd'd to this worktree's directory"/>
+        <!--
+          Note: keyboard-shortcut / Find Action support for OpenInTerminalAction is
+          intentionally deferred to a future task.  The action is currently reachable
+          only through the Stacks-tab context menu and the worktree-list right-click menu.
+          (Consistent with the Track Branch / Untrack Branch note in plugin.xml.)
+        -->
     </actions>
 </idea-plugin>

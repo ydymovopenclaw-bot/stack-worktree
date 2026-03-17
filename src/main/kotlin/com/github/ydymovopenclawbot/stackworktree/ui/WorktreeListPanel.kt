@@ -180,7 +180,8 @@ class WorktreeListPanel(
                 }
 
                 private fun showContextMenu(e: MouseEvent) {
-                    buildWorktreeContextMenu(wt).show(e.component, e.x, e.y)
+                    val popup = buildWorktreeContextMenu(wt)
+                    if (popup.componentCount > 0) popup.show(e.component, e.x, e.y)
                 }
             })
         }
@@ -235,7 +236,8 @@ class WorktreeListPanel(
     /**
      * Builds a right-click popup for [wt] containing "Open in New Window" and
      * "Open in Terminal" items.  Items are omitted when their respective callback
-     * is not provided, so the menu is never shown empty.
+     * is not provided.  Callers must check [JPopupMenu.getComponentCount] before
+     * calling [JPopupMenu.show] to avoid displaying an empty popup.
      */
     private fun buildWorktreeContextMenu(wt: Worktree): JPopupMenu {
         val popup = JPopupMenu()

@@ -51,8 +51,10 @@ class OpenInNewWindowAction : DumbAwareAction("Open in New Window") {
             }
 
             // Open the worktree root in a new frame, bypassing the "same/new window?" dialog.
+            // Use targetPath (already canonicalised) so that the opened project's basePath
+            // matches future duplicate-window checks even when the raw path contains symlinks.
             ProjectManagerEx.getInstanceEx().openProject(
-                Path.of(worktree.path),
+                targetPath,
                 OpenProjectTask { forceOpenInNewFrame = true },
             )
         }
