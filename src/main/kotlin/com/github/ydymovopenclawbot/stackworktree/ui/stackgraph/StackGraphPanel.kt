@@ -53,6 +53,7 @@ class StackGraphPanel : JPanel() {
 
     private var graphData: StackGraphData = StackGraphData()
     private var layoutResult: StackGraphLayout.Result = StackGraphLayout.compute(StackGraphData())
+    private var nodeById: Map<String, StackNodeData> = emptyMap()
 
     /** Id of the currently selected node, or `null` when nothing is selected. */
     var selectedNodeId: String? = null
@@ -89,12 +90,14 @@ class StackGraphPanel : JPanel() {
      * Replaces the displayed graph with [data], recomputes the layout,
      * and schedules a repaint.
      *
-     * Safe to call from any thread; Swing operations are performed on the EDT
-     * via [revalidate]/[repaint] (which are thread-safe by contract).
+     * **Must be called on the Event Dispatch Thread (EDT).** Callers on
+     * background threads must dispatch via
+     * [javax.swing.SwingUtilities.invokeLater].
      */
     fun updateGraph(data: StackGraphData) {
-        graphData    = data
-        layoutResult = StackGraphLayout.compute(data)
+        graphData      = data
+        nodeById       = data.nodes.associateBy { it.id }
+        layoutResult   = StackGraphLayout.compute(data)
         selectedNodeId = null
 
         val w = layoutResult.canvasWidth.coerceAtLeast(200)
@@ -110,7 +113,6 @@ class StackGraphPanel : JPanel() {
     // ------------------------------------------------------------------
 
     private fun hitTest(px: Int, py: Int): StackNodeData? {
-        val nodeById = graphData.nodes.associateBy { it.id }
         for ((id, rect) in layoutResult.nodeRects) {
             if (rect.contains(px.toDouble(), py.toDouble())) {
                 return nodeById[id]
@@ -192,7 +194,6 @@ class StackGraphPanel : JPanel() {
     // ------------------------------------------------------------------
 
     private fun paintNodes(g2: Graphics2D) {
-        val nodeById = graphData.nodes.associateBy { it.id }
         for ((id, rect) in layoutResult.nodeRects) {
             val node = nodeById[id] ?: continue
             paintNode(g2, node, rect, isSelected = (id == selectedNodeId))
@@ -207,13 +208,24 @@ class StackGraphPanel : JPanel() {
         g2.color = if (isSelected) StackGraphColors.NODE_SELECTED_BG else StackGraphColors.NODE_BG
         g2.fill(rrect)
 
-        // Border
-        val borderColor  = if (isSelected) StackGraphColors.NODE_SELECTED_BORDER
-                           else            StackGraphColors.borderForStatus(node.healthStatus)
-        val strokeWidth  = if (isSelected) 2.5f else 1.5f
-        g2.color  = borderColor
-        g2.stroke = BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        // Health-status border — always drawn so the status colour is never hidden
+        g2.color  = StackGraphColors.borderForStatus(node.healthStatus)
+        g2.stroke = BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
         g2.draw(rrect)
+
+        // Selection highlight — inset second stroke so the health colour remains visible beneath it
+        if (isSelected) {
+            val inset   = 1.5
+            val selArc  = (arc - inset * 2).coerceAtLeast(0.0)
+            val selRect = RoundRectangle2D.Double(
+                rect.x + inset, rect.y + inset,
+                rect.width - inset * 2, rect.height - inset * 2,
+                selArc, selArc,
+            )
+            g2.color  = StackGraphColors.NODE_SELECTED_BORDER
+            g2.stroke = BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g2.draw(selRect)
+        }
 
         // Current-branch indicator dot (small filled circle, top-left corner)
         if (node.isCurrentBranch) {
@@ -286,6 +298,24 @@ class StackGraphPanel : JPanel() {
         g2.drawString(text, bx + padH, by + padV + fm.ascent)
 
         return bx
+    }
+
+    // ------------------------------------------------------------------
+    // Package-internal API (for testing and keyboard navigation)
+    // ------------------------------------------------------------------
+
+    /**
+     * Programmatically selects the node with [id] and fires [onNodeSelected].
+     * No-op if [id] is not present in the current graph.
+     *
+     * This mirrors the single-click code path and is exposed so that tests can
+     * verify callback invocation without simulating [java.awt.event.MouseEvent]s.
+     */
+    internal fun selectNode(id: String) {
+        val node = nodeById[id] ?: return
+        selectedNodeId = id
+        repaint()
+        onNodeSelected?.invoke(node)
     }
 
     // ------------------------------------------------------------------

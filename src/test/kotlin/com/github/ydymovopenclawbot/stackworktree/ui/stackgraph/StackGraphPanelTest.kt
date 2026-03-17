@@ -139,10 +139,82 @@ class StackGraphPanelTest {
         }
         assertNotNull(panel.preferredSize)
     }
+
+    // ------------------------------------------------------------------
+    // selectNode — hit-test path and callback invocation
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `selectNode fires onNodeSelected with correct node data`() {
+        val panel = StackGraphPanel()
+        panel.updateGraph(StackGraphData(listOf(node("main"), node("feature", parentId = "main"))))
+
+        var received: StackNodeData? = null
+        panel.onNodeSelected = { received = it }
+
+        panel.selectNode("main")
+
+        assertNotNull(received)
+        assertEquals("main", received!!.id)
+        assertEquals("main", panel.selectedNodeId)
+    }
+
+    @Test
+    fun `selectNode on unknown id is a no-op`() {
+        val panel = StackGraphPanel()
+        panel.updateGraph(StackGraphData(listOf(node("main"))))
+
+        var callCount = 0
+        panel.onNodeSelected = { callCount++ }
+
+        panel.selectNode("nonexistent")
+
+        assertEquals(0, callCount)
+        assertNull(panel.selectedNodeId)
+    }
+
+    @Test
+    fun `selectNode updates selectedNodeId across successive calls`() {
+        val panel = StackGraphPanel()
+        panel.updateGraph(StackGraphData(listOf(node("main"), node("feat", parentId = "main"))))
+
+        panel.selectNode("feat")
+        assertEquals("feat", panel.selectedNodeId)
+
+        panel.selectNode("main")
+        assertEquals("main", panel.selectedNodeId)
+    }
+
+    @Test
+    fun `selectNode does not fire onNodeNavigated`() {
+        val panel = StackGraphPanel()
+        panel.updateGraph(StackGraphData(listOf(node("main"))))
+
+        var navigated = false
+        panel.onNodeNavigated = { navigated = true }
+
+        panel.selectNode("main")
+
+        assertFalse(navigated, "selectNode must only fire onNodeSelected, not onNodeNavigated")
+    }
+
+    @Test
+    fun `selectNode with null onNodeSelected does not throw`() {
+        val panel = StackGraphPanel()
+        panel.updateGraph(StackGraphData(listOf(node("main"))))
+        panel.onNodeSelected = null
+
+        panel.selectNode("main") // must not throw
+        assertEquals("main", panel.selectedNodeId)
+    }
 }
 
-// Kotlin stdlib assertTrue / assertFalse adapter (avoids importing org.junit.jupiter versions
-// which have different signatures than Assertions.assertTrue).
+// Kotlin stdlib assertTrue/assertFalse adapters (avoids importing org.junit.jupiter versions
+// which have different signatures than Assertions.assertTrue/assertFalse).
 private fun assertTrue(condition: Boolean, message: String = "") {
     if (!condition) throw AssertionError(if (message.isEmpty()) "Expected true" else message)
+}
+
+private fun assertFalse(condition: Boolean, message: String = "") {
+    if (condition) throw AssertionError(if (message.isEmpty()) "Expected false" else message)
 }
