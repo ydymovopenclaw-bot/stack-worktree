@@ -57,6 +57,13 @@ object StackGraphColors {
     val BADGE_BEHIND_TEXT: JBColor = JBColor(Color(0xC5221F), Color(0xF28B82))
 
     // ------------------------------------------------------------------
+    // Worktree badge — teal pill shown when a linked worktree is bound
+    // ------------------------------------------------------------------
+
+    val BADGE_WORKTREE_BG: JBColor = JBColor(Color(0xE8F5E9), Color(0x1B3A2B))
+    val BADGE_WORKTREE_TEXT: JBColor = JBColor(Color(0x2E7D32), Color(0x66BB6A))
+
+    // ------------------------------------------------------------------
     // Edge (connector line between parent and child nodes)
     // ------------------------------------------------------------------
 

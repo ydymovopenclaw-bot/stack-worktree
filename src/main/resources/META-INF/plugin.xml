@@ -27,6 +27,15 @@
                     class="com.github.ydymovopenclawbot.stackworktree.actions.InsertBranchBelowAction"
                     text="Insert Branch Below"
                     description="Insert a new branch as a child of this branch and re-parent all existing children to it"/>
+            <separator/>
+            <action id="StackWorktree.CreateWorktree"
+                    class="com.github.ydymovopenclawbot.stackworktree.actions.CreateWorktreeAction"
+                    text="Create Worktree"
+                    description="Create a linked git worktree for the selected branch"/>
+            <action id="StackWorktree.RemoveWorktree"
+                    class="com.github.ydymovopenclawbot.stackworktree.actions.RemoveWorktreeAction"
+                    text="Remove Worktree"
+                    description="Remove the linked git worktree bound to the selected branch"/>
         </group>
     </actions>
 

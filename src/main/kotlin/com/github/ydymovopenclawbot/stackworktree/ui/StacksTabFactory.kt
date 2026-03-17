@@ -4,7 +4,9 @@ import com.github.ydymovopenclawbot.stackworktree.git.AheadBehindCalculator
 import com.github.ydymovopenclawbot.stackworktree.git.BranchDetailService
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.IntelliJGitRunner
+import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
+import com.github.ydymovopenclawbot.stackworktree.ops.WorktreeOps
 import com.github.ydymovopenclawbot.stackworktree.startup.StackGitChangeListener
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.PluginState
@@ -13,22 +15,28 @@ import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackTreeStateListener
 import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
 import com.github.ydymovopenclawbot.stackworktree.state.StateStorage
+import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.HealthStatus
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphData
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphPanel
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
 import com.github.ydymovopenclawbot.stackworktree.actions.StackDataKeys
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.DataProvider
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vcs.changes.ui.ChangesViewContentProvider
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.JBSplitter
-import com.intellij.ui.PopupHandler
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.messages.MessageBusConnection
@@ -36,6 +44,7 @@ import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import java.awt.BorderLayout
 import java.awt.Point
+import java.io.File
 import java.nio.file.Paths
 import javax.swing.JComponent
 import javax.swing.JMenuItem
@@ -64,13 +73,19 @@ private val LOG = logger<StacksTabFactory>()
  *   [com.github.ydymovopenclawbot.stackworktree.actions.NewStackAction] (or any other writer)
  *   persists new state.
  *
- * Right-clicking a node shows a context menu:
- * - **Insert Branch Above / Below** — registered actions via `StackWorktree.StackBranchPopup`
- *   group (installed via [PopupHandler]).
+ * Right-clicking a node shows a **single** context menu containing:
+ * - **Insert Branch Above / Below** — via registered actions `StackWorktree.InsertBranchAbove`
+ *   / `StackWorktree.InsertBranchBelow`, triggered through [ActionManager.tryToExecute].
+ * - **Create Worktree / Remove Worktree** — mutually exclusive based on whether the branch
+ *   already has a linked worktree; delegates to [launchCreateWorktree] / [launchRemoveWorktree].
  * - **Track Branch…** — always available; opens [TrackBranchDialog] to add an untracked
  *   local branch to the [StateLayer] tree.
  * - **Untrack Branch** — only for nodes present in [StateLayer.load].trackedBranches;
  *   removes the node via [OpsLayer.untrackBranch] without deleting the git branch.
+ *
+ * A single custom [JPopupMenu] is used for all items (no [com.intellij.ui.PopupHandler]);
+ * this avoids the double-popup issue that would arise if both a registered action group and
+ * a programmatic popup were wired to the same right-click trigger.
  *
  * The graph auto-refreshes on [GitRepository.GIT_REPO_CHANGE] (commit / checkout /
  * rebase / fetch / pull) and on [STACK_STATE_TOPIC] (track / untrack operations).
@@ -138,6 +153,10 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         val detail  = BranchDetailPanel()
         detailPanel = detail
 
+        // Wire Create / Remove worktree buttons in the detail panel.
+        detail.onCreateWorktree = { branchName -> launchCreateWorktree(branchName) }
+        detail.onRemoveWorktree = { branchName -> launchRemoveWorktree(branchName) }
+
         // ── Node selection → load detail panel ───────────────────────────────
         graph.onNodeSelected = { node ->
             LOG.debug("Selected node: ${node.branchName}")
@@ -153,48 +172,27 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         }
         graph.onNodeNavigated = { node -> LOG.info("Navigate requested for: ${node.branchName}") }
 
-        // Attach the stack branch context-menu for registered actions (Insert Branch Above/Below).
-        PopupHandler.installPopupMenu(graph, "StackWorktree.StackBranchPopup", ActionPlaces.POPUP)
-
-        // ── Right-click → context menu (track / untrack) ─────────────────────
+        // ── Right-click → single unified context menu ─────────────────────────
+        //
+        // All context-menu items are placed in one JPopupMenu to avoid the double-popup
+        // that would occur if both a PopupHandler (action group) and a programmatic popup
+        // were wired to the same isPopupTrigger event.
+        //
+        // Insert Above / Below are triggered via ActionManager.tryToExecute so they reuse
+        // the existing action logic (input dialog, validation, background task) without
+        // duplicating it here.
         val stateLayer = project.service<StateLayer>()
         val opsLayer   = project.service<OpsLayer>()
         val gitLayer   = project.service<GitLayer>()
         graph.onContextMenu = { node, location ->
-            val popup = JPopupMenu()
-
-            // "Track Branch…" — always available.
-            // State is loaded inside the listener so it reflects any mutations that
-            // occurred between popup-open time and the moment the user clicks the item.
-            val trackItem = JMenuItem("Track Branch\u2026")
-            trackItem.addActionListener {
-                val currentState  = stateLayer.load()
-                val allBranches   = gitLayer.listLocalBranches()
-                val tracked       = currentState.trackedBranches.keys
-                val untracked     = allBranches.filter { it !in tracked && it != currentState.trunkBranch }
-                if (untracked.isEmpty()) return@addActionListener
-                val parentChoices = listOfNotNull(currentState.trunkBranch) + tracked.sorted()
-                val dialog = TrackBranchDialog(project, untracked, parentChoices)
-                if (dialog.showAndGet()) {
-                    opsLayer.trackBranch(dialog.selectedBranch, dialog.selectedParent)
-                }
-            }
-            popup.add(trackItem)
-
-            // "Untrack Branch" — only for tracked (non-trunk) nodes.
-            // Visibility is checked at popup-open time (acceptable: the popup was just
-            // opened, and OpsLayerImpl will reject an invalid untrack gracefully).
-            if (node != null) {
-                val openState = stateLayer.load()
-                if (node.branchName in openState.trackedBranches) {
-                    popup.add(JSeparator())
-                    val untrackItem = JMenuItem("Untrack Branch")
-                    untrackItem.addActionListener { opsLayer.untrackBranch(node.branchName) }
-                    popup.add(untrackItem)
-                }
-            }
-
-            popup.show(graph, location.x, location.y)
+            buildContextMenu(
+                graph      = graph,
+                node       = node,
+                location   = location,
+                stateLayer = stateLayer,
+                opsLayer   = opsLayer,
+                gitLayer   = gitLayer,
+            )
         }
 
         val toolbar = StackTreeToolbar.create("StacksTab") { performRefresh() }
@@ -306,6 +304,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                         behind          = ab?.behind ?: 0,
                         healthStatus    = health,
                         isCurrentBranch = branchNode.name == currentBranch,
+                        hasWorktree     = branchNode.worktreePath != null,
                     )
                 } ?: emptyList()
 
@@ -381,5 +380,188 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     private fun updateStatusBar(model: StackViewModel) {
         val bar = WindowManager.getInstance().getStatusBar(project) ?: return
         (bar.getWidget(StackStatusBarWidget.ID) as? StackStatusBarWidget)?.updateState(model)
+    }
+
+    // ── Context menu ──────────────────────────────────────────────────────────
+
+    /**
+     * Builds and shows the single right-click context menu for the graph panel.
+     *
+     * All actions are placed in one [JPopupMenu] so that right-clicking never triggers
+     * two separate popups. Insert Above / Below are fired via [ActionManager.tryToExecute]
+     * so their existing input-dialog / validation / background-task logic is reused.
+     * Worktree and Track/Untrack items are wired directly to [launchCreateWorktree],
+     * [launchRemoveWorktree], and [OpsLayer].
+     *
+     * Must be called on the EDT (from [StackGraphPanel.onContextMenu]).
+     */
+    private fun buildContextMenu(
+        graph: StackGraphPanel,
+        node: StackNodeData?,
+        location: Point,
+        stateLayer: StateLayer,
+        opsLayer: OpsLayer,
+        gitLayer: GitLayer,
+    ) {
+        val popup = JPopupMenu()
+        val am    = ActionManager.getInstance()
+
+        // Insert Above / Below — only meaningful when a node is targeted.
+        if (node != null) {
+            val insertAboveItem = JMenuItem("Insert Branch Above")
+            insertAboveItem.addActionListener {
+                am.getAction("StackWorktree.InsertBranchAbove")?.let { action ->
+                    am.tryToExecute(action, null, graph, ActionPlaces.POPUP, true)
+                }
+            }
+            popup.add(insertAboveItem)
+
+            val insertBelowItem = JMenuItem("Insert Branch Below")
+            insertBelowItem.addActionListener {
+                am.getAction("StackWorktree.InsertBranchBelow")?.let { action ->
+                    am.tryToExecute(action, null, graph, ActionPlaces.POPUP, true)
+                }
+            }
+            popup.add(insertBelowItem)
+
+            popup.add(JSeparator())
+
+            // Create Worktree — only when no worktree is bound yet.
+            if (!node.hasWorktree) {
+                val createItem = JMenuItem("Create Worktree")
+                createItem.addActionListener { launchCreateWorktree(node.branchName) }
+                popup.add(createItem)
+            } else {
+                // Remove Worktree — only when a worktree is already bound.
+                val removeItem = JMenuItem("Remove Worktree")
+                removeItem.addActionListener { launchRemoveWorktree(node.branchName) }
+                popup.add(removeItem)
+            }
+
+            popup.add(JSeparator())
+        }
+
+        // "Track Branch…" — always available.
+        // State is loaded inside the listener so it reflects mutations that occurred
+        // between popup-open time and the moment the user clicks the item.
+        val trackItem = JMenuItem("Track Branch\u2026")
+        trackItem.addActionListener {
+            val currentState  = stateLayer.load()
+            val allBranches   = gitLayer.listLocalBranches()
+            val tracked       = currentState.trackedBranches.keys
+            val untracked     = allBranches.filter { it !in tracked && it != currentState.trunkBranch }
+            if (untracked.isEmpty()) return@addActionListener
+            val parentChoices = listOfNotNull(currentState.trunkBranch) + tracked.sorted()
+            val dialog        = TrackBranchDialog(project, untracked, parentChoices)
+            if (dialog.showAndGet()) {
+                opsLayer.trackBranch(dialog.selectedBranch, dialog.selectedParent)
+            }
+        }
+        popup.add(trackItem)
+
+        // "Untrack Branch" — only for tracked (non-trunk) nodes.
+        // Visibility checked at popup-open time; OpsLayerImpl rejects invalid untracks.
+        if (node != null) {
+            val openState = stateLayer.load()
+            if (node.branchName in openState.trackedBranches) {
+                val untrackItem = JMenuItem("Untrack Branch")
+                untrackItem.addActionListener { opsLayer.untrackBranch(node.branchName) }
+                popup.add(untrackItem)
+            }
+        }
+
+        popup.show(graph, location.x, location.y)
+    }
+
+    // ── Worktree helpers ──────────────────────────────────────────────────────
+
+    /**
+     * Shows [WorktreePathDialog] and — on confirmation — creates a linked worktree for
+     * [branchName] on a background thread.  Fires [StackTreeStateListener] on success.
+     *
+     * Must be called on the EDT.
+     */
+    private fun launchCreateWorktree(branchName: String) {
+        val ops         = WorktreeOps.forProject(project)
+        val defaultPath = ops.defaultWorktreePath(branchName)
+        val dialog      = WorktreePathDialog(project, branchName, defaultPath)
+        if (!dialog.showAndGet()) return
+
+        val chosenPath = dialog.getChosenPath()
+        if (dialog.isRememberDefault()) {
+            val parentDir = File(chosenPath).parent
+            if (parentDir != null) project.stackStateService().setWorktreeBasePath(parentDir)
+        }
+
+        object : Task.Backgroundable(project, "Creating worktree for '$branchName'…", false) {
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = true
+                try {
+                    ops.createWorktreeForBranch(branchName, chosenPath)
+                    project.messageBus
+                        .syncPublisher(StackTreeStateListener.TOPIC)
+                        .stateChanged()
+                    notify("Worktree for '$branchName' created at '$chosenPath'.", NotificationType.INFORMATION)
+                } catch (ex: WorktreeException) {
+                    LOG.warn("StacksTabFactory: createWorktree failed", ex)
+                    notify("Failed to create worktree: ${ex.message}", NotificationType.ERROR)
+                } catch (ex: IllegalStateException) {
+                    LOG.warn("StacksTabFactory: branch already has worktree", ex)
+                    notify(ex.message ?: "Branch already has a worktree.", NotificationType.WARNING)
+                } catch (ex: Exception) {
+                    LOG.error("StacksTabFactory: createWorktree unexpected error", ex)
+                    notify("Unexpected error: ${ex.message}", NotificationType.ERROR)
+                }
+            }
+        }.queue()
+    }
+
+    /**
+     * Shows a confirmation dialog and — on confirmation — removes the linked worktree for
+     * [branchName] on a background thread.  Fires [StackTreeStateListener] on success.
+     *
+     * Must be called on the EDT.
+     */
+    private fun launchRemoveWorktree(branchName: String) {
+        val ops  = WorktreeOps.forProject(project)
+        // Use "(path unknown)" rather than the branch name when no path is recorded — the
+        // branch name in a "Directory:" field would be misleading to the user.
+        val path = project.stackStateService().getWorktreePath(branchName) ?: "(path unknown)"
+
+        val confirmed = Messages.showYesNoDialog(
+            project,
+            "Remove the worktree for '$branchName'?\n\nDirectory: $path\n\nThe directory will be deleted.",
+            "Remove Worktree",
+            "Remove",
+            "Cancel",
+            Messages.getWarningIcon(),
+        )
+        if (confirmed != Messages.YES) return
+
+        object : Task.Backgroundable(project, "Removing worktree for '$branchName'…", false) {
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = true
+                try {
+                    ops.removeWorktreeForBranch(branchName)
+                    project.messageBus
+                        .syncPublisher(StackTreeStateListener.TOPIC)
+                        .stateChanged()
+                    notify("Worktree for '$branchName' removed.", NotificationType.INFORMATION)
+                } catch (ex: WorktreeException) {
+                    LOG.warn("StacksTabFactory: removeWorktree failed", ex)
+                    notify("Failed to remove worktree: ${ex.message}", NotificationType.ERROR)
+                } catch (ex: Exception) {
+                    LOG.error("StacksTabFactory: removeWorktree unexpected error", ex)
+                    notify("Unexpected error: ${ex.message}", NotificationType.ERROR)
+                }
+            }
+        }.queue()
+    }
+
+    private fun notify(message: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("StackWorktree")
+            .createNotification(message, type)
+            .notify(project)
     }
 }
