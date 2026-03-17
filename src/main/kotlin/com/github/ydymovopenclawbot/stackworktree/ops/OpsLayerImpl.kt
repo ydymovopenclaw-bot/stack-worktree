@@ -8,22 +8,20 @@ import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
 import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackStateStore
+import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
+import com.github.ydymovopenclawbot.stackworktree.state.TrackedBranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
+import com.github.ydymovopenclawbot.stackworktree.ui.STACK_STATE_TOPIC
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import git4idea.GitUtil
 
 private val LOG = logger<OpsLayerImpl>()
 
-/**
- * Production [OpsLayer] that coordinates [GitLayer] and [StackStateStore] to implement
- * higher-level stack operations.
- *
- * The [gitLayerOverride] and [stateStoreOverride] parameters allow injecting test
- * doubles without requiring a live IntelliJ project.  When `null` (the default) the
- * dependencies are resolved from the first available git repository inside [project].
- */
+@Service(Service.Level.PROJECT)
 class OpsLayerImpl(
     private val project: Project,
     private val gitLayerOverride: GitLayer? = null,
@@ -31,18 +29,10 @@ class OpsLayerImpl(
 ) : OpsLayer {
 
     companion object {
-        /** Creates a production [OpsLayer] wired to the first git repository in [project]. */
         fun forProject(project: Project): OpsLayer = OpsLayerImpl(project)
     }
 
-    // -------------------------------------------------------------------------
-    // Lazy dependencies (re-resolved on every call unless overridden)
-    // -------------------------------------------------------------------------
-
-    private fun gitLayer(): GitLayer = gitLayerOverride ?: run {
-        val root = repoRoot()
-        GitLayerImpl(project, root)
-    }
+    private fun gitLayer(): GitLayer = gitLayerOverride ?: GitLayerImpl(project)
 
     private fun stateStore(): StackStateStore = stateStoreOverride ?: run {
         val root = repoRoot()
@@ -54,10 +44,6 @@ class OpsLayerImpl(
         GitUtil.getRepositoryManager(project).repositories.firstOrNull()?.root
             ?: error("No git repository found in project '${project.name}'")
 
-    // -------------------------------------------------------------------------
-    // OpsLayer stubs (not in scope for this task)
-    // -------------------------------------------------------------------------
-
     override fun switchWorktree(worktreePath: String): Unit =
         TODO("switchWorktree not yet implemented")
 
@@ -67,27 +53,6 @@ class OpsLayerImpl(
     override fun pruneStale(): Unit =
         TODO("pruneStale not yet implemented")
 
-    // -------------------------------------------------------------------------
-    // Insert above
-    // -------------------------------------------------------------------------
-
-    /**
-     * Inserts [newBranchName] between [targetBranch] and its parent.
-     *
-     * ```
-     * Before:  … → parent → targetBranch → children…
-     * After:   … → parent → newBranchName → targetBranch → children…
-     * ```
-     *
-     * Algorithm:
-     * 1. Read current [StackState] (initialise a minimal one if absent).
-     * 2. Validate [newBranchName] is absent from both stack state and local git.
-     * 3. Create [newBranchName] from [targetBranch]'s parent tip (or its own tip when root).
-     * 4. Save [targetBranch]'s pre-rebase SHA, then rebase [targetBranch] onto [newBranchName].
-     * 5. Cascade-rebase descendants in BFS order using pre-rebase tip SHAs as upstreams.
-     * 6. On any abort: best-effort rollback of rebased branches, reset [targetBranch], delete [newBranchName].
-     * 7. On full success: persist updated state.
-     */
     override fun insertBranchAbove(targetBranch: String, newBranchName: String) {
         val git = gitLayer()
         val store = stateStore()
@@ -99,17 +64,13 @@ class OpsLayerImpl(
             ?: BranchNode(name = targetBranch, parent = null)
         val oldParent: String? = targetNode.parent
 
-        // Create newBranchName from oldParent's tip (or targetBranch itself when it is root).
         val createBase = oldParent ?: targetBranch
         LOG.info("insertBranchAbove: creating '$newBranchName' from '$createBase'")
         git.createBranch(newBranchName, createBase)
 
         val updatedState = buildStateForInsertAbove(originalState, targetBranch, newBranchName, oldParent)
 
-        // When targetBranch is the root (no parent) both branches share the same commit,
-        // so no rebase is needed — just persist the updated state graph.
         if (oldParent != null) {
-            // Capture targetBranch's SHA *before* rebasing — used as upstream for its children.
             val oldTargetTip = git.resolveCommit(targetBranch)
 
             LOG.info("insertBranchAbove: rebasing '$targetBranch' --onto '$newBranchName' (upstream '$oldParent')")
@@ -122,11 +83,8 @@ class OpsLayerImpl(
                 }
             }
 
-            // Cascade: rebase descendants of targetBranch in BFS order.
             val cascadeResult = rebaseDescendants(git, updatedState, targetBranch, oldTargetTip)
             if (cascadeResult is CascadeResult.Aborted) {
-                // Children have been rolled back by rebaseDescendants; clean up the two
-                // remaining mutations from this operation: newBranchName and targetBranch.
                 val deleteOk = rollbackBranchCreation(git, newBranchName)
                 val resetOk = runCatching { git.resetBranch(targetBranch, oldTargetTip) }.isSuccess
                 if (!deleteOk || !resetOk) {
@@ -143,26 +101,6 @@ class OpsLayerImpl(
         LOG.info("insertBranchAbove: done — '$newBranchName' inserted above '$targetBranch'")
     }
 
-    // -------------------------------------------------------------------------
-    // Insert below
-    // -------------------------------------------------------------------------
-
-    /**
-     * Inserts [newBranchName] between [targetBranch] and all its current children.
-     *
-     * ```
-     * Before:  … → targetBranch → C1, C2, …
-     * After:   … → targetBranch → newBranchName → C1, C2, …
-     * ```
-     *
-     * Algorithm:
-     * 1. Read current [StackState].
-     * 2. Validate [newBranchName] is absent from both stack state and local git.
-     * 3. Create [newBranchName] at [targetBranch]'s tip.
-     * 4. For each direct child C: capture its pre-rebase SHA, then rebase C onto [newBranchName].
-     * 5. On abort: best-effort `resetBranch` for already-moved children, then delete [newBranchName].
-     * 6. On full success: persist updated state.
-     */
     override fun insertBranchBelow(targetBranch: String, newBranchName: String) {
         val git = gitLayer()
         val store = stateStore()
@@ -177,8 +115,6 @@ class OpsLayerImpl(
 
         val updatedState = buildStateForInsertBelow(originalState, targetBranch, newBranchName, children)
 
-        // Rebase each existing child onto newBranchName.
-        // Track completed rebases (branch → pre-rebase SHA) for best-effort rollback.
         data class Rebased(val branch: String, val oldTip: String)
         val rebased = mutableListOf<Rebased>()
 
@@ -189,7 +125,6 @@ class OpsLayerImpl(
                 is RebaseResult.Success -> rebased.add(Rebased(child, oldChildTip))
                 is RebaseResult.Aborted -> {
                     LOG.warn("insertBranchBelow: rebase of '$child' aborted — rolling back. Reason: ${r.reason}")
-                    // Best-effort: force-reset already-moved children back to their pre-rebase tips.
                     for (done in rebased.asReversed()) {
                         runCatching { git.resetBranch(done.branch, done.oldTip) }
                             .onFailure {
@@ -206,27 +141,6 @@ class OpsLayerImpl(
         LOG.info("insertBranchBelow: done — '$newBranchName' inserted below '$targetBranch'")
     }
 
-    // -------------------------------------------------------------------------
-    // Add branch to stack
-    // -------------------------------------------------------------------------
-
-    /**
-     * Creates a new branch on top of [parentNode] and registers it in the stack graph.
-     *
-     * Sequence:
-     * 1. `git checkout -b <newBranch>` **or** `git worktree add <worktreePath> <newBranch>`
-     *    depending on [createWorktree].
-     * 2. If [commitMessage] is non-blank: `git add -A && git commit -m <commitMessage>`.
-     * 3. Records branch→parent (and optional worktree path) in [StackStateService]
-     *    for lightweight, restart-safe lookups.
-     * 4. Writes the updated [StackState] to `refs/stacktree/state` via [StateStorage]
-     *    so [com.github.ydymovopenclawbot.stackworktree.ui.StacksTabFactory.performRefresh]
-     *    displays the new branch with accurate ahead/behind counts on the next refresh.
-     * 5. Returns a [StackNodeData] representing the new node.
-     *
-     * @throws com.github.ydymovopenclawbot.stackworktree.git.BranchOperationException
-     *   if a git command fails (e.g. branch already exists, nothing to commit).
-     */
     override fun addBranchToStack(
         parentNode: StackNodeData,
         newBranch: String,
@@ -237,7 +151,6 @@ class OpsLayerImpl(
         val git = gitLayer()
         val store = stateStore()
 
-        // Step 1 — create branch
         if (createWorktree) {
             requireNotNull(worktreePath) { "worktreePath must be non-null when createWorktree=true" }
             git.worktreeAdd(worktreePath, newBranch)
@@ -245,23 +158,19 @@ class OpsLayerImpl(
             git.checkoutNewBranch(newBranch)
         }
 
-        // Step 2 — optional commit
         if (!commitMessage.isNullOrBlank()) {
             git.stageAll()
             git.commit(commitMessage)
         }
 
-        // Step 3 — XML persistence (quick lookup, survives IDE restart)
         project.stackStateService().recordBranch(
             branch       = newBranch,
             parentBranch = parentNode.branchName,
             worktreePath = worktreePath,
         )
 
-        // Step 4 — git-object persistence (feeds the full refresh pipeline)
         persistToStateStorage(store, newBranch, parentNode.branchName, worktreePath)
 
-        // Step 5 — return view-model for the new node
         return StackNodeData(
             id         = newBranch,
             branchName = newBranch,
@@ -269,35 +178,78 @@ class OpsLayerImpl(
         )
     }
 
-    // -------------------------------------------------------------------------
-    // Rebase cascade
-    // -------------------------------------------------------------------------
+    // ── Track / Untrack ───────────────────────────────────────────────────────
 
-    /**
-     * Rebases all descendants of [rootBranch] (BFS order) after [rootBranch] has been
-     * moved by the "insert above" operation.
-     *
-     * The critical correctness detail: each `git rebase --onto <newParent> <upstream> <child>`
-     * must supply the *pre-rebase* SHA of `<child>`'s parent as `<upstream>`, so that only
-     * the child's own commits (not its parent's) are replayed.  These SHAs are captured
-     * before each rebase and stored in [oldTips] for use by deeper levels.
-     *
-     * Rollback of the two outer mutations ([rootBranch] itself and the newly created branch)
-     * is the **caller's** responsibility; this function only rolls back the children it has
-     * already moved.
-     *
-     * @param oldRootTip SHA of [rootBranch] **before** it was rebased. Seeded into [oldTips]
-     *                   so first-level children can supply the correct upstream.
-     * @return [CascadeResult.Success] on full success; [CascadeResult.Aborted] if any rebase
-     *         was aborted (best-effort child rollback is performed before returning).
-     */
+    override fun trackBranch(branch: String, parentBranch: String) {
+        val stateLayer = project.service<StateLayer>()
+        val current = stateLayer.load()
+        require(branch !in current.trackedBranches) {
+            "'$branch' is already tracked"
+        }
+        val validParents = buildSet {
+            current.trunkBranch?.let { add(it) }
+            addAll(current.trackedBranches.keys)
+        }
+        require(parentBranch in validParents) {
+            "'$parentBranch' is not a valid parent (must be trunk or a tracked branch)"
+        }
+
+        val newNode = TrackedBranchNode(name = branch, parentName = parentBranch)
+        val updated = current.trackedBranches.toMutableMap()
+        updated[branch] = newNode
+
+        val parentNode = updated[parentBranch]
+        if (parentNode != null) {
+            updated[parentBranch] = parentNode.copy(children = parentNode.children + branch)
+        }
+
+        stateLayer.save(current.copy(trackedBranches = updated))
+        notifyStateChanged()
+    }
+
+    override fun untrackBranch(branch: String) {
+        val stateLayer = project.service<StateLayer>()
+        val current = stateLayer.load()
+        val node = current.trackedBranches[branch]
+            ?: throw IllegalArgumentException("'$branch' is not currently tracked")
+
+        val updated = current.trackedBranches.toMutableMap()
+
+        // Re-parent each child to the untracked node's parent.
+        for (childName in node.children) {
+            val child = updated[childName] ?: continue
+            updated[childName] = child.copy(parentName = node.parentName)
+        }
+
+        // Splice children into the parent's children list at the removed node's position.
+        val parentName = node.parentName
+        val parentNode = if (parentName != null) updated[parentName] else null
+        if (parentNode != null && parentName != null) {
+            val idx = parentNode.children.indexOf(branch)
+            val newChildren = parentNode.children.toMutableList()
+            if (idx >= 0) newChildren.removeAt(idx)
+            val insertAt = if (idx >= 0) idx else newChildren.size
+            newChildren.addAll(insertAt, node.children)
+            updated[parentName] = parentNode.copy(children = newChildren)
+        }
+
+        updated.remove(branch)
+        stateLayer.save(current.copy(trackedBranches = updated))
+        notifyStateChanged()
+    }
+
+    private fun notifyStateChanged() {
+        project.messageBus.syncPublisher(STACK_STATE_TOPIC).stateChanged()
+    }
+
+    // ── Rebase helpers ────────────────────────────────────────────────────────
+
     private fun rebaseDescendants(
         git: GitLayer,
         state: StackState,
         rootBranch: String,
         oldRootTip: String,
     ): CascadeResult {
-        // Maps branchName → tip SHA captured before that branch was rebased.
         val oldTips = mutableMapOf(rootBranch to oldRootTip)
 
         data class Rebased(val branch: String, val oldTip: String)
@@ -312,7 +264,6 @@ class OpsLayerImpl(
                 continue
             }
 
-            // Save child's tip before rebasing so its own children can use it as upstream.
             val oldChildTip = git.resolveCommit(child)
             LOG.info("rebaseDescendants: rebasing '$child' --onto '$childParent' (upstream was $oldParentTip)")
             when (val r = git.rebaseOnto(child, childParent, oldParentTip)) {
@@ -323,7 +274,6 @@ class OpsLayerImpl(
                 }
                 is RebaseResult.Aborted -> {
                     LOG.warn("rebaseDescendants: cascade rebase of '$child' aborted. Reason: ${r.reason}")
-                    // Best-effort: force-reset already-moved children back to their pre-rebase SHAs.
                     for (done in rebased.asReversed()) {
                         runCatching { git.resetBranch(done.branch, done.oldTip) }
                             .onFailure {
@@ -337,21 +287,11 @@ class OpsLayerImpl(
         return CascadeResult.Success
     }
 
-    /** Result of a [rebaseDescendants] call. */
     private sealed class CascadeResult {
         object Success : CascadeResult()
         object Aborted : CascadeResult()
     }
 
-    // -------------------------------------------------------------------------
-    // Rollback helpers
-    // -------------------------------------------------------------------------
-
-    /**
-     * Force-deletes [branchName] created during the operation (best-effort).
-     *
-     * @return `true` if the deletion succeeded; `false` if it failed (already logged).
-     */
     private fun rollbackBranchCreation(git: GitLayer, branchName: String): Boolean {
         return try {
             git.deleteBranch(branchName)
@@ -363,11 +303,6 @@ class OpsLayerImpl(
         }
     }
 
-    // -------------------------------------------------------------------------
-    // State builders
-    // -------------------------------------------------------------------------
-
-    /** Builds the updated [StackState] for an "insert above" operation. */
     private fun buildStateForInsertAbove(
         original: StackState,
         targetBranch: String,
@@ -393,7 +328,6 @@ class OpsLayerImpl(
         )
     }
 
-    /** Builds the updated [StackState] for an "insert below" operation. */
     private fun buildStateForInsertBelow(
         original: StackState,
         targetBranch: String,
@@ -417,24 +351,12 @@ class OpsLayerImpl(
         )
     }
 
-    // -------------------------------------------------------------------------
-    // Utility
-    // -------------------------------------------------------------------------
-
-    /** Returns the stored [StackState], or a minimal one seeded with [seedBranch] as trunk. */
     private fun readOrInit(store: StackStateStore, seedBranch: String): StackState =
         store.read() ?: StackState(
             repoConfig = RepoConfig(trunk = seedBranch, remote = "origin"),
             branches = mapOf(seedBranch to BranchNode(name = seedBranch, parent = null)),
         )
 
-    /**
-     * Validates that [branchName] is absent from both the stack state **and** local git,
-     * producing a user-friendly [IllegalArgumentException] before any git operation runs.
-     *
-     * Checking git directly avoids a confusing [WorktreeCommandException] when the branch
-     * exists in git but is not yet tracked in the stack state.
-     */
     private fun requireBranchAbsent(git: GitLayer, state: StackState, branchName: String) {
         require(branchName !in state.branches) {
             "Branch '$branchName' already exists in the stack state"
@@ -444,13 +366,6 @@ class OpsLayerImpl(
         }
     }
 
-    /**
-     * Writes the new branch relationship to `refs/stacktree/state`.
-     *
-     * If no state exists yet, bootstraps a minimal [StackState] with [parentBranch]
-     * as the trunk.  Also updates the parent's [BranchNode.children] list so the
-     * graph renders edges correctly.
-     */
     private fun persistToStateStorage(
         store: StackStateStore,
         newBranch: String,
@@ -468,7 +383,6 @@ class OpsLayerImpl(
             putAll(baseBranches)
             put(newBranch, newBranchNode)
             if (updatedParent != null) put(parentBranch, updatedParent)
-            // Ensure the parent appears in the graph even if it was not previously tracked.
             if (parentBranch !in baseBranches) {
                 put(parentBranch, BranchNode(name = parentBranch, parent = null))
             }

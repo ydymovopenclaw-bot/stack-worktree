@@ -44,16 +44,44 @@
             order="after git"/>
         <projectService
             serviceImplementation="com.github.ydymovopenclawbot.stackworktree.state.StackStateService"/>
+
+        <!-- Notification groups -->
         <notificationGroup id="StackTree" displayType="BALLOON" key="stacktree.notification.group"/>
         <notificationGroup id="StackWorktree" displayType="BALLOON"/>
+        <notificationGroup id="Stack Worktree Notifications" displayType="BALLOON"/>
+
+        <!-- State / Git / Ops / UI layer project services (S3.3) -->
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.state.StateLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.state.StateLayerImpl"/>
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.git.GitLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl"/>
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl"/>
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.ui.UiLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.ui.UiLayerImpl"/>
     </extensions>
 
     <actions>
+        <!-- S3.1: Create new stack -->
         <action id="StackTree.NewStack"
                 class="com.github.ydymovopenclawbot.stackworktree.actions.NewStackAction"
                 text="New Stack"
                 description="Create a new branch stack"
                 icon="AllIcons.General.Add"/>
+
+        <!-- S3.3: Track / Untrack existing branches -->
+        <action id="StacksTab.TrackBranch"
+                class="com.github.ydymovopenclawbot.stackworktree.ui.actions.TrackBranchAction"
+                text="Track Branch..."
+                description="Add an existing local branch to the tracked stack tree"/>
+        <action id="StacksTab.UntrackBranch"
+                class="com.github.ydymovopenclawbot.stackworktree.ui.actions.UntrackBranchAction"
+                text="Untrack Branch"
+                description="Remove a branch from the tracked stack tree (git branch is NOT deleted)"/>
     </actions>
 
     <!--

@@ -16,6 +16,9 @@ interface GitLayer {
     /** Prunes stale worktree administrative files. */
     fun worktreePrune()
 
+    /** Returns all local branch names, sorted alphabetically. */
+    fun listLocalBranches(): List<String>
+
     /**
      * Returns how many commits [branch] is ahead of and behind [parent].
      *
