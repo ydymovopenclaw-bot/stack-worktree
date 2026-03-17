@@ -95,7 +95,7 @@ class BranchDetailService(private val project: Project) {
         handler.addParameters("--left-right", "--count", "$parent...$branch")
         val result = Git.getInstance().runCommand(handler)
         if (!result.success()) return 0 to 0
-        val parts = result.output.firstOrNull()?.trim()?.split("\\s+".toRegex()) ?: return 0 to 0
+        val parts = result.output.firstOrNull()?.trim()?.split('\t') ?: return 0 to 0
         val behind = parts.getOrNull(0)?.toIntOrNull() ?: 0
         val ahead  = parts.getOrNull(1)?.toIntOrNull() ?: 0
         return ahead to behind

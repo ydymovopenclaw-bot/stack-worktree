@@ -1,6 +1,7 @@
 package com.github.ydymovopenclawbot.stackworktree.ui
 
 import com.github.ydymovopenclawbot.stackworktree.model.StackNode
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBPanel
@@ -169,12 +170,16 @@ internal class BranchDetailPanel : JBPanel<BranchDetailPanel>(BorderLayout()) {
     // ── Utilities ─────────────────────────────────────────────────────────────
 
     private fun openDirectory(path: String) {
-        if (Desktop.isDesktopSupported()) {
+        if (!Desktop.isDesktopSupported()) return
+        try {
             Desktop.getDesktop().open(File(path))
+        } catch (e: Exception) {
+            LOG.warn("Failed to open worktree directory '$path'", e)
         }
     }
 
     companion object {
+        private val LOG = Logger.getInstance(BranchDetailPanel::class.java)
         private const val EMPTY     = "—"
         private const val NOT_BOUND = "Not bound"
     }
