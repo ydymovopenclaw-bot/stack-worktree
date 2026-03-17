@@ -1,9 +1,11 @@
 package com.github.ydymovopenclawbot.stackworktree.ui
 
+import com.github.ydymovopenclawbot.stackworktree.actions.AddBranchToStackAction
 import com.github.ydymovopenclawbot.stackworktree.git.AheadBehindCalculator
 import com.github.ydymovopenclawbot.stackworktree.git.BranchDetailService
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl
 import com.github.ydymovopenclawbot.stackworktree.git.IntelliJGitRunner
+import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
 import com.github.ydymovopenclawbot.stackworktree.startup.StackGitChangeListener
 import com.github.ydymovopenclawbot.stackworktree.state.StackTreeStateListener
 import com.github.ydymovopenclawbot.stackworktree.state.StateStorage
@@ -28,8 +30,11 @@ import com.intellij.util.messages.MessageBusConnection
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import java.awt.BorderLayout
+import java.awt.event.MouseEvent
 import java.nio.file.Paths
 import javax.swing.JComponent
+import javax.swing.JMenuItem
+import javax.swing.JPopupMenu
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingUtilities
 
@@ -45,6 +50,9 @@ private val LOG = logger<StacksTabFactory>()
  *
  * Selecting a node in the graph triggers [BranchDetailService.loadNode] on a pooled thread,
  * then updates the detail panel on the EDT.
+ *
+ * Right-clicking a node shows a context menu with the "Add Branch to Stack" action.
+ * On success [performRefresh] is called to reload the graph from persistent state.
  *
  * On [initContent] the panel subscribes to:
  * - [GitRepository.GIT_REPO_CHANGE] so the graph auto-refreshes on every commit, checkout,
@@ -133,9 +141,13 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         }
         graph.onNodeNavigated = { node -> LOG.info("Navigate requested for: ${node.branchName}") }
 
-        // Attach the stack branch context-menu so right-clicking a node shows
-        // "Insert Branch Above" / "Insert Branch Below" etc.
+        // Attach the stack branch context-menu for registered actions (Insert Branch Above/Below).
         PopupHandler.installPopupMenu(graph, "StackWorktree.StackBranchPopup", ActionPlaces.POPUP)
+
+        // Wire right-click context menu: "Add Branch to Stack".
+        graph.onNodeContextMenu = { node, event ->
+            showContextMenu(node, event)
+        }
 
         val toolbar = StackTreeToolbar.create("StacksTab") { performRefresh() }
         toolbar.targetComponent = graph
@@ -291,5 +303,34 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     private fun updateStatusBar(model: StackViewModel) {
         val bar = WindowManager.getInstance().getStatusBar(project) ?: return
         (bar.getWidget(StackStatusBarWidget.ID) as? StackStatusBarWidget)?.updateState(model)
+    }
+
+    // -------------------------------------------------------------------------
+    // Context menu
+    // -------------------------------------------------------------------------
+
+    /**
+     * Shows the right-click context menu anchored at the event position.
+     *
+     * Passes an [OpsLayerImpl] to [AddBranchToStackAction] so the action goes through
+     * the proper orchestration layer rather than touching git directly.
+     * On success, [performRefresh] reloads the full graph from persistent state so
+     * the new branch appears with accurate ahead/behind counts.
+     */
+    private fun showContextMenu(node: StackNodeData, event: MouseEvent) {
+        val h = helpers ?: return
+        val opsLayer = OpsLayerImpl(project, h.gitLayer, h.storage)
+        val menu = JPopupMenu()
+        val addItem = JMenuItem("Add Branch to Stack")
+        addItem.addActionListener {
+            AddBranchToStackAction(
+                project    = project,
+                parentNode = node,
+                opsLayer   = opsLayer,
+                onSuccess  = { performRefresh() },
+            ).perform()
+        }
+        menu.add(addItem)
+        menu.show(event.component, event.x, event.y)
     }
 }

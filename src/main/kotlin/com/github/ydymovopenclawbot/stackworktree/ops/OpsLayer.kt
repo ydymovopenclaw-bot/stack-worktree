@@ -1,5 +1,7 @@
 package com.github.ydymovopenclawbot.stackworktree.ops
 
+import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
+
 /**
  * Ops layer — orchestrates higher-level operations that coordinate git and state layers.
  */
@@ -51,4 +53,32 @@ interface OpsLayer {
      * @throws IllegalArgumentException if [newBranchName] already exists.
      */
     fun insertBranchBelow(targetBranch: String, newBranchName: String)
+
+    /**
+     * Creates a new branch on top of [parentNode] and registers it in the stack graph.
+     *
+     * Sequence:
+     * 1. `git checkout -b <newBranch>` **or** `git worktree add <worktreePath> <newBranch>`
+     *    depending on [createWorktree].
+     * 2. If [commitMessage] is non-blank: `git add -A && git commit -m <commitMessage>`.
+     * 3. Records branch→parent (and optional worktree path) in [StackStateService][com.github.ydymovopenclawbot.stackworktree.state.StackStateService].
+     * 4. Returns a [StackNodeData] representing the new node so callers can
+     *    immediately refresh the graph.
+     *
+     * @param parentNode     The node the new branch is stacked on top of.
+     * @param newBranch      Short name for the new git branch.
+     * @param commitMessage  Optional commit message; when non-blank, stages all
+     *                       changes and commits before returning.
+     * @param createWorktree When `true`, creates a linked worktree via
+     *                       `git worktree add` instead of a plain branch.
+     * @param worktreePath   Required (non-null) when [createWorktree] is `true`.
+     * @return               [StackNodeData] for the newly created node.
+     */
+    fun addBranchToStack(
+        parentNode: StackNodeData,
+        newBranch: String,
+        commitMessage: String?,
+        createWorktree: Boolean,
+        worktreePath: String?,
+    ): StackNodeData
 }

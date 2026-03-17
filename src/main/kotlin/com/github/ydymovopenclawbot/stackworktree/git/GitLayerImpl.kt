@@ -161,6 +161,48 @@ class GitLayerImpl(
         return AheadBehind(ahead = parts[1].toInt(), behind = parts[0].toInt())
     }
 
+    override fun checkoutNewBranch(branch: String) {
+        val result = Git.getInstance().runCommand(
+            GitLineHandler(project, gitRoot, GitCommand.CHECKOUT).also {
+                it.addParameters("-b", branch)
+            }
+        )
+        if (!result.success()) {
+            val err = result.errorOutputAsJoinedString
+            throw BranchOperationException(
+                if (err.isBlank()) "git checkout -b $branch failed" else err
+            )
+        }
+    }
+
+    override fun stageAll() {
+        val result = Git.getInstance().runCommand(
+            GitLineHandler(project, gitRoot, GitCommand.ADD).also {
+                it.addParameters("-A")
+            }
+        )
+        if (!result.success()) {
+            val err = result.errorOutputAsJoinedString
+            throw BranchOperationException(
+                if (err.isBlank()) "git add -A failed" else err
+            )
+        }
+    }
+
+    override fun commit(message: String) {
+        val result = Git.getInstance().runCommand(
+            GitLineHandler(project, gitRoot, GitCommand.COMMIT).also {
+                it.addParameters("-m", message)
+            }
+        )
+        if (!result.success()) {
+            val err = result.errorOutputAsJoinedString
+            throw BranchOperationException(
+                if (err.isBlank()) "git commit failed" else err
+            )
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

@@ -73,6 +73,29 @@ interface GitLayer {
      * @param upstream The old upstream; commits reachable from [upstream] are excluded.
      */
     fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult
+
+    /**
+     * Creates a new local branch from the current HEAD (`git checkout -b <branch>`).
+     *
+     * @throws BranchOperationException if the branch already exists or the command fails.
+     */
+    fun checkoutNewBranch(branch: String)
+
+    /**
+     * Stages all changes in the working tree (`git add -A`).
+     *
+     * @throws BranchOperationException if the command fails.
+     */
+    fun stageAll()
+
+    /**
+     * Creates a commit with [message] (`git commit -m <message>`).
+     *
+     * Requires at least one staged change; throws if there is nothing to commit.
+     *
+     * @throws BranchOperationException if the command fails.
+     */
+    fun commit(message: String)
 }
 
 /** Result of a [GitLayer.rebaseOnto] call. */
@@ -86,6 +109,9 @@ sealed class RebaseResult {
      */
     data class Aborted(val reason: String) : RebaseResult()
 }
+
+/** Thrown when a branch-level git operation (checkout, stage, commit) fails. */
+class BranchOperationException(message: String) : RuntimeException(message)
 
 /**
  * Descriptor for a git worktree.

@@ -35,6 +35,9 @@ class AheadBehindCalculatorTest {
         override fun resetBranch(branchName: String, toCommit: String) = Unit
         override fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult =
             RebaseResult.Success
+        override fun checkoutNewBranch(branch: String) = Unit
+        override fun stageAll() = Unit
+        override fun commit(message: String) = Unit
     }
 
     private lateinit var fake: FakeGitLayer
