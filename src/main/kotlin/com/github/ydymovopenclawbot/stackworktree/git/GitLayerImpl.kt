@@ -27,16 +27,26 @@ import git4idea.update.GitUpdateResult
  *   [GitUtil.getRepositoryManager].
  */
 @Service(Service.Level.PROJECT)
-class GitLayerImpl(private val project: Project) : GitLayer {
+class GitLayerImpl(
+    private val project: Project,
+    /**
+     * Optional root override for testing: when non-null, bypasses
+     * [GitUtil.getRepositoryManager] so tests can supply an explicit repo root
+     * without registering it with IntelliJ's VFS/git index.
+     */
+    private val rootOverride: VirtualFile? = null,
+) : GitLayer {
 
     // ── Repository root ───────────────────────────────────────────────────────
 
     /**
-     * Resolves the repository root on every access via IntelliJ's in-memory index.
-     * Returns `null` when no git repository is open (e.g. during IDE startup).
+     * Resolves the repository root. Uses [rootOverride] when provided (tests), otherwise
+     * falls back to IntelliJ's in-memory index. Returns `null` when no git repository
+     * is open (e.g. during IDE startup).
      */
     private val gitRoot: VirtualFile?
-        get() = GitUtil.getRepositoryManager(project).repositories.firstOrNull()?.root
+        get() = rootOverride
+            ?: GitUtil.getRepositoryManager(project).repositories.firstOrNull()?.root
 
     /**
      * Returns [gitRoot], throwing [WorktreeCommandException] when no repository is found.
@@ -88,11 +98,9 @@ class GitLayerImpl(private val project: Project) : GitLayer {
     }
 
     override fun listLocalBranches(): List<String> {
-        val root = gitRoot ?: return emptyList()
-        val repoManager = GitUtil.getRepositoryManager(project)
-        val repo = repoManager.getRepositoryForRoot(root)
-            ?: repoManager.repositories.firstOrNull()
-        return repo?.branches?.localBranches?.map { it.name }?.sorted() ?: emptyList()
+        val repo = GitUtil.getRepositoryManager(project).repositories.firstOrNull()
+            ?: return emptyList()
+        return repo.branches.localBranches.map { it.name }.sorted()
     }
 
     override fun resolveCommit(branchOrRef: String): String {

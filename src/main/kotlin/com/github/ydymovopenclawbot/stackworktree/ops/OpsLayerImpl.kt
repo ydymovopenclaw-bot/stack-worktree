@@ -5,6 +5,7 @@ import com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl
 import com.github.ydymovopenclawbot.stackworktree.git.ProcessGitRunner
 import com.github.ydymovopenclawbot.stackworktree.git.RebaseResult
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
+import com.github.ydymovopenclawbot.stackworktree.state.PluginState
 import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
 import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackStateStore
@@ -21,6 +22,16 @@ import git4idea.GitUtil
 
 private val LOG = logger<OpsLayerImpl>()
 
+/**
+ * Production [OpsLayer] implementation.
+ *
+ * Track/untrack operations are pure state mutations — no git branches are created
+ * or deleted. After every mutation the project message bus fires [STACK_STATE_TOPIC]
+ * so that UI subscribers (e.g. StacksTabFactory) refresh automatically.
+ *
+ * The mutation algorithms are extracted into [Algorithms] so they can be unit-tested
+ * without an IntelliJ Platform environment.
+ */
 @Service(Service.Level.PROJECT)
 class OpsLayerImpl(
     private val project: Project,
@@ -31,6 +42,8 @@ class OpsLayerImpl(
     companion object {
         fun forProject(project: Project): OpsLayer = OpsLayerImpl(project)
     }
+
+    private val state get() = project.service<StateLayer>()
 
     private fun gitLayer(): GitLayer = gitLayerOverride ?: GitLayerImpl(project)
 
@@ -181,65 +194,101 @@ class OpsLayerImpl(
     // ── Track / Untrack ───────────────────────────────────────────────────────
 
     override fun trackBranch(branch: String, parentBranch: String) {
-        val stateLayer = project.service<StateLayer>()
-        val current = stateLayer.load()
-        require(branch !in current.trackedBranches) {
-            "'$branch' is already tracked"
-        }
-        val validParents = buildSet {
-            current.trunkBranch?.let { add(it) }
-            addAll(current.trackedBranches.keys)
-        }
-        require(parentBranch in validParents) {
-            "'$parentBranch' is not a valid parent (must be trunk or a tracked branch)"
-        }
-
-        val newNode = TrackedBranchNode(name = branch, parentName = parentBranch)
-        val updated = current.trackedBranches.toMutableMap()
-        updated[branch] = newNode
-
-        val parentNode = updated[parentBranch]
-        if (parentNode != null) {
-            updated[parentBranch] = parentNode.copy(children = parentNode.children + branch)
-        }
-
-        stateLayer.save(current.copy(trackedBranches = updated))
+        state.save(Algorithms.applyTrackBranch(state.load(), branch, parentBranch))
         notifyStateChanged()
     }
 
     override fun untrackBranch(branch: String) {
-        val stateLayer = project.service<StateLayer>()
-        val current = stateLayer.load()
-        val node = current.trackedBranches[branch]
-            ?: throw IllegalArgumentException("'$branch' is not currently tracked")
-
-        val updated = current.trackedBranches.toMutableMap()
-
-        // Re-parent each child to the untracked node's parent.
-        for (childName in node.children) {
-            val child = updated[childName] ?: continue
-            updated[childName] = child.copy(parentName = node.parentName)
-        }
-
-        // Splice children into the parent's children list at the removed node's position.
-        val parentName = node.parentName
-        val parentNode = if (parentName != null) updated[parentName] else null
-        if (parentNode != null && parentName != null) {
-            val idx = parentNode.children.indexOf(branch)
-            val newChildren = parentNode.children.toMutableList()
-            if (idx >= 0) newChildren.removeAt(idx)
-            val insertAt = if (idx >= 0) idx else newChildren.size
-            newChildren.addAll(insertAt, node.children)
-            updated[parentName] = parentNode.copy(children = newChildren)
-        }
-
-        updated.remove(branch)
-        stateLayer.save(current.copy(trackedBranches = updated))
+        state.save(Algorithms.applyUntrackBranch(state.load(), branch))
         notifyStateChanged()
     }
 
     private fun notifyStateChanged() {
         project.messageBus.syncPublisher(STACK_STATE_TOPIC).stateChanged()
+    }
+
+    // ── Pure mutation algorithms (internal for testing) ───────────────────────
+
+    /**
+     * Platform-free implementations of the track/untrack algorithms.
+     *
+     * Exposed as `internal` so [OpsLayerImplTest][com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImplTest]
+     * can exercise every code path — including edge cases like mid-stack re-parenting —
+     * without requiring a live [Project] or IntelliJ Platform test fixtures.
+     */
+    internal object Algorithms {
+
+        /**
+         * Returns a new [PluginState] with [branch] inserted as a child of [parentBranch].
+         *
+         * @throws IllegalArgumentException if [branch] is already tracked, or if
+         *   [parentBranch] is neither the trunk nor an existing tracked branch.
+         */
+        fun applyTrackBranch(
+            current: PluginState,
+            branch: String,
+            parentBranch: String,
+        ): PluginState {
+            require(branch !in current.trackedBranches) {
+                "'$branch' is already tracked"
+            }
+            val validParents = buildSet {
+                current.trunkBranch?.let { add(it) }
+                addAll(current.trackedBranches.keys)
+            }
+            require(parentBranch in validParents) {
+                "'$parentBranch' is not a valid parent (must be trunk or a tracked branch)"
+            }
+
+            val updated = current.trackedBranches.toMutableMap()
+            updated[branch] = TrackedBranchNode(name = branch, parentName = parentBranch)
+
+            // Append branch to parent's children list (parent may be trunk = not in map).
+            val parentNode = updated[parentBranch]
+            if (parentNode != null) {
+                updated[parentBranch] = parentNode.copy(children = parentNode.children + branch)
+            }
+
+            return current.copy(trackedBranches = updated)
+        }
+
+        /**
+         * Returns a new [PluginState] with [branch] removed from the tracked tree.
+         *
+         * Children of [branch] are re-parented to [branch]'s own parent, spliced into
+         * the parent's children list at the position where [branch] was.
+         *
+         * @throws IllegalArgumentException if [branch] is not currently tracked.
+         */
+        fun applyUntrackBranch(current: PluginState, branch: String): PluginState {
+            val node = current.trackedBranches[branch]
+                ?: throw IllegalArgumentException("'$branch' is not currently tracked")
+
+            val updated = current.trackedBranches.toMutableMap()
+
+            // Re-parent each child to this node's parent.
+            for (childName in node.children) {
+                val child = updated[childName] ?: continue
+                updated[childName] = child.copy(parentName = node.parentName)
+            }
+
+            // Splice node's children into its parent's children list at the removed node's
+            // position. If the parent is trunk (not in the map) there is no list to update —
+            // the re-parented children already carry the correct parentName.
+            val parentName = node.parentName
+            val parentNode = if (parentName != null) updated[parentName] else null
+            if (parentNode != null && parentName != null) {
+                val idx = parentNode.children.indexOf(branch)
+                val newChildren = parentNode.children.toMutableList()
+                if (idx >= 0) newChildren.removeAt(idx)
+                val insertAt = if (idx >= 0) idx else newChildren.size
+                newChildren.addAll(insertAt, node.children)
+                updated[parentName] = parentNode.copy(children = newChildren)
+            }
+
+            updated.remove(branch)
+            return current.copy(trackedBranches = updated)
+        }
     }
 
     // ── Rebase helpers ────────────────────────────────────────────────────────

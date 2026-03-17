@@ -73,15 +73,12 @@
                 description="Create a new branch stack"
                 icon="AllIcons.General.Add"/>
 
-        <!-- S3.3: Track / Untrack existing branches -->
-        <action id="StacksTab.TrackBranch"
-                class="com.github.ydymovopenclawbot.stackworktree.ui.actions.TrackBranchAction"
-                text="Track Branch..."
-                description="Add an existing local branch to the tracked stack tree"/>
-        <action id="StacksTab.UntrackBranch"
-                class="com.github.ydymovopenclawbot.stackworktree.ui.actions.UntrackBranchAction"
-                text="Untrack Branch"
-                description="Remove a branch from the tracked stack tree (git branch is NOT deleted)"/>
+        <!--
+          Note: Track Branch and Untrack Branch are built programmatically inside
+          StacksTabFactory's JPopupMenu and do not have standalone AnAction classes.
+          Registration here for keyboard-shortcut / Find Action access is deferred
+          to a future task.
+        -->
     </actions>
 
     <!--

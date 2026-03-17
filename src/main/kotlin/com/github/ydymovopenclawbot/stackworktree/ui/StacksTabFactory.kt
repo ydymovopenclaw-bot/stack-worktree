@@ -6,6 +6,10 @@ import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.IntelliJGitRunner
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.startup.StackGitChangeListener
+import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
+import com.github.ydymovopenclawbot.stackworktree.state.PluginState
+import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
+import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackTreeStateListener
 import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
 import com.github.ydymovopenclawbot.stackworktree.state.StateStorage
@@ -157,12 +161,14 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         val opsLayer   = project.service<OpsLayer>()
         val gitLayer   = project.service<GitLayer>()
         graph.onContextMenu = { node, location ->
-            val currentState = stateLayer.load()
             val popup = JPopupMenu()
 
-            // "Track Branch…" — always available
+            // "Track Branch…" — always available.
+            // State is loaded inside the listener so it reflects any mutations that
+            // occurred between popup-open time and the moment the user clicks the item.
             val trackItem = JMenuItem("Track Branch\u2026")
             trackItem.addActionListener {
+                val currentState  = stateLayer.load()
                 val allBranches   = gitLayer.listLocalBranches()
                 val tracked       = currentState.trackedBranches.keys
                 val untracked     = allBranches.filter { it !in tracked && it != currentState.trunkBranch }
@@ -175,12 +181,17 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             }
             popup.add(trackItem)
 
-            // "Untrack Branch" — only for tracked (non-trunk) nodes
-            if (node != null && node.branchName in currentState.trackedBranches) {
-                popup.add(JSeparator())
-                val untrackItem = JMenuItem("Untrack Branch")
-                untrackItem.addActionListener { opsLayer.untrackBranch(node.branchName) }
-                popup.add(untrackItem)
+            // "Untrack Branch" — only for tracked (non-trunk) nodes.
+            // Visibility is checked at popup-open time (acceptable: the popup was just
+            // opened, and OpsLayerImpl will reject an invalid untrack gracefully).
+            if (node != null) {
+                val openState = stateLayer.load()
+                if (node.branchName in openState.trackedBranches) {
+                    popup.add(JSeparator())
+                    val untrackItem = JMenuItem("Untrack Branch")
+                    untrackItem.addActionListener { opsLayer.untrackBranch(node.branchName) }
+                    popup.add(untrackItem)
+                }
             }
 
             popup.show(graph, location.x, location.y)
@@ -236,10 +247,16 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     // ── Refresh pipeline ──────────────────────────────────────────────────────
 
     /**
-     * Full refresh: reads [com.github.ydymovopenclawbot.stackworktree.state.StackState]
-     * from `refs/stacktree/state`, recalculates ahead/behind counts via
-     * [AheadBehindCalculator], converts to [StackGraphData] and [StackViewModel], then
-     * re-renders on the EDT.
+     * Full refresh: resolves the effective [StackState] (preferring [StateLayer] data
+     * written by track/untrack operations over the git-refs-based [StateStorage]),
+     * recalculates ahead/behind counts via [AheadBehindCalculator], converts to
+     * [StackGraphData] and [StackViewModel], then re-renders on the EDT.
+     *
+     * **Source precedence:**
+     * 1. [StateLayer.load].trackedBranches — written by [com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl]
+     *    on every track/untrack mutation; always up-to-date after a [STACK_STATE_TOPIC] event.
+     * 2. [StateStorage.read] — git-refs-based store used by earlier plugin versions or
+     *    richer metadata (PR info, health). Used only when trackedBranches is empty.
      *
      * Runs git I/O on a pooled thread; switches back to the EDT for all UI updates.
      */
@@ -251,11 +268,18 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     renderEmpty(); return@executeOnPooledThread
                 }
 
-                val h            = getOrCreateHelpers(repo.root)
-                val state        = h.storage.read()
+                val h             = getOrCreateHelpers(repo.root)
                 val currentBranch = repo.currentBranchName
 
-                // Build branch → parent map from the persisted graph.
+                // Prefer StateLayer (kept in sync by OpsLayerImpl) over StateStorage so
+                // that tracked branches are immediately visible after track/untrack.
+                val pluginState = project.service<StateLayer>().load()
+                val state: StackState? = when {
+                    pluginState.trackedBranches.isNotEmpty() -> synthesizeStackState(pluginState)
+                    else                                     -> h.storage.read()
+                }
+
+                // Build branch → parent map from the resolved graph.
                 val branchToParent: Map<String, String> = state?.branches?.values
                     ?.mapNotNull { node -> node.parent?.let { node.name to it } }
                     ?.toMap()
@@ -330,6 +354,22 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 renderEmpty()
             }
         }
+    }
+
+    /**
+     * Converts [PluginState.trackedBranches] into a [StackState] suitable for the graph
+     * renderer.  Fields not tracked by [StateLayer] (PR info, health, worktree path) are
+     * left at their defaults; ahead/behind is computed separately by [AheadBehindCalculator].
+     */
+    private fun synthesizeStackState(pluginState: PluginState): StackState {
+        val trunk = pluginState.trunkBranch ?: "main"
+        val branches = pluginState.trackedBranches.mapValues { (_, node) ->
+            BranchNode(name = node.name, parent = node.parentName, children = node.children)
+        }
+        return StackState(
+            repoConfig = RepoConfig(trunk = trunk, remote = "origin"),
+            branches   = branches,
+        )
     }
 
     private fun renderEmpty() {

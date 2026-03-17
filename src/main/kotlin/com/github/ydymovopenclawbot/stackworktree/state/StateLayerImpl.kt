@@ -30,6 +30,8 @@ class StateLayerImpl : StateLayer, PersistentStateComponent<StateLayerImpl.XmlSt
     class XmlState {
         var trunkBranch: String? = null
         var trackedBranches: MutableMap<String, XmlNode> = mutableMapOf()
+        var activeWorktrees: MutableList<String> = mutableListOf()
+        var lastUsedBranch: String? = null
     }
 
     // ── PersistentStateComponent ──────────────────────────────────────────────
@@ -53,6 +55,8 @@ class StateLayerImpl : StateLayer, PersistentStateComponent<StateLayerImpl.XmlSt
                 children = xml.children.toList(),
             )
         },
+        activeWorktrees = xmlState.activeWorktrees.toList(),
+        lastUsedBranch  = xmlState.lastUsedBranch,
     )
 
     override fun save(state: PluginState) {
@@ -66,5 +70,7 @@ class StateLayerImpl : StateLayer, PersistentStateComponent<StateLayerImpl.XmlSt
                 }
             }
             .toMutableMap()
+        xmlState.activeWorktrees = state.activeWorktrees.toMutableList()
+        xmlState.lastUsedBranch  = state.lastUsedBranch
     }
 }
