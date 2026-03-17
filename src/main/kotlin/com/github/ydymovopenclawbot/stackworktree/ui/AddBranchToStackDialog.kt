@@ -100,12 +100,25 @@ class AddBranchToStackDialog(
     }
 
     override fun doValidate(): ValidationInfo? {
-        if (getBranchName().isBlank()) {
+        val name = getBranchName()
+        if (name.isBlank()) {
             return ValidationInfo("Branch name must not be empty.", branchNameField)
         }
-        // Basic git branch-name safety check (no spaces, no ..)
-        if (getBranchName().contains(' ') || getBranchName().contains("..")) {
-            return ValidationInfo("Branch name contains invalid characters.", branchNameField)
+        // Enforce git-check-ref-format rules via a positive whitelist plus explicit
+        // ban-list checks.  Allowed: alphanumerics, dot, hyphen, underscore, slash.
+        // Disallowed: spaces, ~, ^, :, ?, *, [, \, consecutive dots, leading/trailing
+        // dot, .lock suffix, @{ sequence.
+        val valid = Regex("^[a-zA-Z0-9._/-]+$").matches(name)
+            && !name.contains("..")
+            && !name.startsWith(".")
+            && !name.endsWith(".")
+            && !name.endsWith(".lock")
+            && !name.contains("@{")
+        if (!valid) {
+            return ValidationInfo(
+                "Branch name is invalid for git (avoid spaces, ~^:?*[\\ and ref-format rules).",
+                branchNameField,
+            )
         }
         return null
     }

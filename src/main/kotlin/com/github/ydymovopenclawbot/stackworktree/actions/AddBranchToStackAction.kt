@@ -1,8 +1,7 @@
 package com.github.ydymovopenclawbot.stackworktree.actions
 
 import com.github.ydymovopenclawbot.stackworktree.git.BranchOperationException
-import com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl
-import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
+import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.ui.AddBranchToStackDialog
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
 import com.intellij.notification.NotificationGroupManager
@@ -10,8 +9,6 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.LocalFileSystem
-import git4idea.GitUtil
 import javax.swing.SwingUtilities
 
 private val LOG = logger<AddBranchToStackAction>()
@@ -20,21 +17,22 @@ private val LOG = logger<AddBranchToStackAction>()
  * Orchestrates the "Add Branch to Stack" user flow:
  *
  * 1. Shows [AddBranchToStackDialog].
- * 2. On confirmation, runs the git operation on a pooled thread.
- * 3. Records the parent relationship in [StackStateService][com.github.ydymovopenclawbot.stackworktree.state.StackStateService].
- * 4. Invokes [onSuccess] on the EDT with the new [StackNodeData] so the graph
- *    can be refreshed immediately.
+ * 2. On confirmation, delegates all git + state operations to [opsLayer] on a pooled thread.
+ * 3. Invokes [onSuccess] on the EDT with the new [StackNodeData] so the caller can
+ *    trigger a graph refresh.
  *
  * Constructed programmatically (not via plugin.xml) so it can accept context
  * objects rather than relying on DataContext wiring.
  *
  * @param project    The current project.
  * @param parentNode The node the new branch will be stacked on.
+ * @param opsLayer   Orchestration layer that performs the git and state operations.
  * @param onSuccess  Called on the EDT after the branch is created successfully.
  */
 class AddBranchToStackAction(
     private val project: Project,
     private val parentNode: StackNodeData,
+    private val opsLayer: OpsLayer,
     private val onSuccess: (newNode: StackNodeData) -> Unit,
 ) {
 
@@ -49,7 +47,13 @@ class AddBranchToStackAction(
 
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                val newNode = execute(newBranch, commitMessage, useWorktree, worktreePath)
+                val newNode = opsLayer.addBranchToStack(
+                    parentNode     = parentNode,
+                    newBranch      = newBranch,
+                    commitMessage  = commitMessage,
+                    createWorktree = useWorktree,
+                    worktreePath   = worktreePath,
+                )
                 SwingUtilities.invokeLater {
                     notify("Branch '${newNode.branchName}' added to stack.", NotificationType.INFORMATION)
                     onSuccess(newNode)
@@ -70,50 +74,18 @@ class AddBranchToStackAction(
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private fun execute(
-        newBranch: String,
-        commitMessage: String?,
-        useWorktree: Boolean,
-        worktreePath: String?,
-    ): StackNodeData {
-        val gitLayer = buildGitLayer()
-
-        if (useWorktree) {
-            requireNotNull(worktreePath) { "worktreePath must be non-null when createWorktree=true" }
-            gitLayer.worktreeAdd(worktreePath, newBranch)
-        } else {
-            gitLayer.checkoutNewBranch(newBranch)
-        }
-
-        if (!commitMessage.isNullOrBlank()) {
-            gitLayer.stageAll()
-            gitLayer.commit(commitMessage)
-        }
-
-        // Record the parent relationship atomically.
-        project.stackStateService().recordBranch(
-            branch      = newBranch,
-            parentBranch = parentNode.branchName,
-            worktreePath = worktreePath,
-        )
-
-        return StackNodeData(
-            id         = newBranch,
-            branchName = newBranch,
-            parentId   = parentNode.id,
-        )
+    /**
+     * Resolves the default worktree path as a sibling directory of the project root.
+     *
+     * @throws BranchOperationException if [Project.basePath] is null (e.g. default project).
+     */
+    private fun defaultWorktreePath(branch: String): String {
+        val base = project.basePath
+            ?: throw BranchOperationException(
+                "Cannot determine worktree path: project '${project.name}' has no base directory"
+            )
+        return "$base/../worktrees/$branch"
     }
-
-    private fun buildGitLayer(): GitLayerImpl {
-        val repo = GitUtil.getRepositoryManager(project).repositories.firstOrNull()
-            ?: error("No git repository found in project '${project.name}'")
-        val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(repo.root.toNioPath().toFile())
-            ?: error("VirtualFile not found for git root ${repo.root}")
-        return GitLayerImpl(project, vf)
-    }
-
-    private fun defaultWorktreePath(branch: String): String =
-        "${project.basePath}/../worktrees/$branch"
 
     private fun notify(message: String, type: NotificationType) {
         NotificationGroupManager.getInstance()

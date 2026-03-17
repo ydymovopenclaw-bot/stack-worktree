@@ -78,14 +78,10 @@ class StackGraphPanel : JPanel() {
 
         addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
+                // Right-click is handled by mousePressed/mouseReleased for cross-platform
+                // popup-trigger correctness; skip it here to avoid double invocation.
+                if (SwingUtilities.isRightMouseButton(e)) return
                 val hit = hitTest(e.x, e.y) ?: return
-                if (SwingUtilities.isRightMouseButton(e)) {
-                    // Right-click: select the node, then surface the context menu.
-                    selectedNodeId = hit.id
-                    repaint()
-                    onNodeContextMenu?.invoke(hit, e)
-                    return
-                }
                 when (e.clickCount) {
                     1 -> {
                         selectedNodeId = hit.id
@@ -94,6 +90,24 @@ class StackGraphPanel : JPanel() {
                     }
                     2 -> onNodeNavigated?.invoke(hit)
                 }
+            }
+
+            // macOS fires the popup trigger on mousePressed; Windows/Linux on mouseReleased.
+            // Handling both — guarded by isPopupTrigger — is the standard Swing idiom for
+            // reliable cross-platform context menus.
+            override fun mousePressed(e: MouseEvent) {
+                if (e.isPopupTrigger) handlePopup(e)
+            }
+
+            override fun mouseReleased(e: MouseEvent) {
+                if (e.isPopupTrigger) handlePopup(e)
+            }
+
+            private fun handlePopup(e: MouseEvent) {
+                val hit = hitTest(e.x, e.y) ?: return
+                selectedNodeId = hit.id
+                repaint()
+                onNodeContextMenu?.invoke(hit, e)
             }
         })
     }
