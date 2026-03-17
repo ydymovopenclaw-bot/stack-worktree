@@ -44,16 +44,41 @@
             order="after git"/>
         <projectService
             serviceImplementation="com.github.ydymovopenclawbot.stackworktree.state.StackStateService"/>
+
+        <!-- Notification groups -->
         <notificationGroup id="StackTree" displayType="BALLOON" key="stacktree.notification.group"/>
         <notificationGroup id="StackWorktree" displayType="BALLOON"/>
+        <notificationGroup id="Stack Worktree Notifications" displayType="BALLOON"/>
+
+        <!-- State / Git / Ops / UI layer project services (S3.3) -->
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.state.StateLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.state.StateLayerImpl"/>
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.git.GitLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl"/>
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl"/>
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.ui.UiLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.ui.UiLayerImpl"/>
     </extensions>
 
     <actions>
+        <!-- S3.1: Create new stack -->
         <action id="StackTree.NewStack"
                 class="com.github.ydymovopenclawbot.stackworktree.actions.NewStackAction"
                 text="New Stack"
                 description="Create a new branch stack"
                 icon="AllIcons.General.Add"/>
+
+        <!--
+          Note: Track Branch and Untrack Branch are built programmatically inside
+          StacksTabFactory's JPopupMenu and do not have standalone AnAction classes.
+          Registration here for keyboard-shortcut / Find Action access is deferred
+          to a future task.
+        -->
     </actions>
 
     <!--

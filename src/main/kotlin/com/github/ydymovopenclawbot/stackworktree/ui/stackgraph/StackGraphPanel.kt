@@ -6,6 +6,7 @@ import java.awt.Dimension
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.Point
 import java.awt.RenderingHints
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -49,12 +50,12 @@ class StackGraphPanel : JPanel() {
     var onNodeNavigated: ((StackNodeData) -> Unit)? = null
 
     /**
-     * Invoked on the EDT when the user right-clicks a node.
-     *
-     * The [MouseEvent] is passed so that callers can anchor a [javax.swing.JPopupMenu]
-     * at the correct screen position via `menu.show(e.component, e.x, e.y)`.
+     * Invoked on the EDT when the user triggers the context menu (right-click /
+     * Ctrl-click on macOS). The [StackNodeData] is the hit-tested node under the
+     * pointer, or `null` when the click lands on empty canvas. [Point] is the
+     * component-relative location suitable for [javax.swing.JPopupMenu.show].
      */
-    var onNodeContextMenu: ((node: StackNodeData, event: MouseEvent) -> Unit)? = null
+    var onContextMenu: ((node: StackNodeData?, location: Point) -> Unit)? = null
 
     // ------------------------------------------------------------------
     // Internal state
@@ -95,19 +96,17 @@ class StackGraphPanel : JPanel() {
             // macOS fires the popup trigger on mousePressed; Windows/Linux on mouseReleased.
             // Handling both — guarded by isPopupTrigger — is the standard Swing idiom for
             // reliable cross-platform context menus.
-            override fun mousePressed(e: MouseEvent) {
-                if (e.isPopupTrigger) handlePopup(e)
-            }
+            override fun mousePressed(e: MouseEvent)  = maybeShowContextMenu(e)
+            override fun mouseReleased(e: MouseEvent) = maybeShowContextMenu(e)
 
-            override fun mouseReleased(e: MouseEvent) {
-                if (e.isPopupTrigger) handlePopup(e)
-            }
-
-            private fun handlePopup(e: MouseEvent) {
-                val hit = hitTest(e.x, e.y) ?: return
-                selectedNodeId = hit.id
-                repaint()
-                onNodeContextMenu?.invoke(hit, e)
+            private fun maybeShowContextMenu(e: MouseEvent) {
+                if (!e.isPopupTrigger) return
+                val hit = hitTest(e.x, e.y)
+                if (hit != null) {
+                    selectedNodeId = hit.id
+                    repaint()
+                }
+                onContextMenu?.invoke(hit, Point(e.x, e.y))
             }
         })
     }

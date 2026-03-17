@@ -1,9 +1,11 @@
 package com.github.ydymovopenclawbot.stackworktree.git
 
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import git4idea.GitUtil
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
@@ -11,21 +13,51 @@ import git4idea.rebase.GitRebaser
 import git4idea.update.GitUpdateResult
 
 /**
- * Production [GitLayer] implementation that shells out to `git worktree` via
- * [GitLineHandler]. Git4Idea does not expose worktree commands natively, so we
- * construct handlers with `GitCommand("worktree")` and append subcommand params.
+ * Production [GitLayer] implementation registered as a project-level service.
  *
- * @param project  The IntelliJ [Project] required by [GitLineHandler].
- * @param gitRoot  The VirtualFile pointing to the root of the git repository.
+ * The repository root is resolved lazily from [GitUtil.getRepositoryManager] on each
+ * access, so callers do not need to supply it at construction time. This makes the class
+ * injectable via `project.service<GitLayer>()`.
+ *
+ * Worktree commands shell out to `git worktree` via [GitLineHandler] (Git4Idea does not
+ * expose worktree commands natively). [listLocalBranches] uses the in-memory branch index
+ * and never forks a process.
+ *
+ * @param project The IntelliJ [Project] used by [GitLineHandler] and
+ *   [GitUtil.getRepositoryManager].
  */
+@Service(Service.Level.PROJECT)
 class GitLayerImpl(
     private val project: Project,
-    private val gitRoot: VirtualFile,
+    /**
+     * Optional root override for testing: when non-null, bypasses
+     * [GitUtil.getRepositoryManager] so tests can supply an explicit repo root
+     * without registering it with IntelliJ's VFS/git index.
+     */
+    private val rootOverride: VirtualFile? = null,
 ) : GitLayer {
 
-    // -------------------------------------------------------------------------
-    // Public API
-    // -------------------------------------------------------------------------
+    // ── Repository root ───────────────────────────────────────────────────────
+
+    /**
+     * Resolves the repository root. Uses [rootOverride] when provided (tests), otherwise
+     * falls back to IntelliJ's in-memory index. Returns `null` when no git repository
+     * is open (e.g. during IDE startup).
+     */
+    private val gitRoot: VirtualFile?
+        get() = rootOverride
+            ?: GitUtil.getRepositoryManager(project).repositories.firstOrNull()?.root
+
+    /**
+     * Returns [gitRoot], throwing [WorktreeCommandException] when no repository is found.
+     * Used by all worktree operations that require a concrete root path.
+     */
+    private fun requireRoot(): VirtualFile =
+        gitRoot ?: throw WorktreeCommandException(
+            "No git repository found for project '${project.name}'"
+        )
+
+    // ── Public API ────────────────────────────────────────────────────────────
 
     override fun worktreeAdd(path: String, branch: String): Worktree {
         val result = runRaw("add", path, branch)
@@ -65,8 +97,14 @@ class GitLayerImpl(
         runOrThrow("prune")
     }
 
+    override fun listLocalBranches(): List<String> {
+        val repo = GitUtil.getRepositoryManager(project).repositories.firstOrNull()
+            ?: return emptyList()
+        return repo.branches.localBranches.map { it.name }.sorted()
+    }
+
     override fun resolveCommit(branchOrRef: String): String {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.REV_PARSE).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.REV_PARSE).also {
             it.addParameters("--verify", branchOrRef)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -78,7 +116,7 @@ class GitLayerImpl(
     }
 
     override fun branchExists(branchName: String): Boolean {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
             it.addParameters("--list", branchName)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -89,7 +127,7 @@ class GitLayerImpl(
     }
 
     override fun resetBranch(branchName: String, toCommit: String) {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
             it.addParameters("-f", branchName, toCommit)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -99,7 +137,7 @@ class GitLayerImpl(
     }
 
     override fun createBranch(branchName: String, baseBranch: String) {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
             it.addParameters(branchName, baseBranch)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -109,7 +147,7 @@ class GitLayerImpl(
     }
 
     override fun deleteBranch(branchName: String) {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
             it.addParameters("-D", branchName)
         }
         val result = Git.getInstance().runCommand(handler)
@@ -135,7 +173,7 @@ class GitLayerImpl(
     override fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult {
         val indicator = ProgressManager.getInstance().progressIndicator ?: EmptyProgressIndicator()
         val rebaser = GitRebaser(project, Git.getInstance(), indicator)
-        val result = rebaser.rebase(gitRoot, listOf("--onto", newBase, upstream, branch))
+        val result = rebaser.rebase(requireRoot(), listOf("--onto", newBase, upstream, branch))
         return when (result) {
             GitUpdateResult.SUCCESS,
             GitUpdateResult.SUCCESS_WITH_RESOLVED_CONFLICTS,
@@ -148,7 +186,7 @@ class GitLayerImpl(
     }
 
     override fun aheadBehind(branch: String, parent: String): AheadBehind {
-        val handler = GitLineHandler(project, gitRoot, GitCommand.REV_LIST).also {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.REV_LIST).also {
             it.addParameters("--left-right", "--count", "$parent...$branch")
         }
         val result = Git.getInstance().runCommand(handler)
@@ -163,7 +201,7 @@ class GitLayerImpl(
 
     override fun checkoutNewBranch(branch: String) {
         val result = Git.getInstance().runCommand(
-            GitLineHandler(project, gitRoot, GitCommand.CHECKOUT).also {
+            GitLineHandler(project, requireRoot(), GitCommand.CHECKOUT).also {
                 it.addParameters("-b", branch)
             }
         )
@@ -177,7 +215,7 @@ class GitLayerImpl(
 
     override fun stageAll() {
         val result = Git.getInstance().runCommand(
-            GitLineHandler(project, gitRoot, GitCommand.ADD).also {
+            GitLineHandler(project, requireRoot(), GitCommand.ADD).also {
                 it.addParameters("-A")
             }
         )
@@ -191,7 +229,7 @@ class GitLayerImpl(
 
     override fun commit(message: String) {
         val result = Git.getInstance().runCommand(
-            GitLineHandler(project, gitRoot, GitCommand.COMMIT).also {
+            GitLineHandler(project, requireRoot(), GitCommand.COMMIT).also {
                 it.addParameters("-m", message)
             }
         )
@@ -203,9 +241,7 @@ class GitLayerImpl(
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     /** Runs a `git worktree <params>` command, throwing on non-zero exit. */
     private fun runOrThrow(vararg params: String): List<String> {
@@ -217,14 +253,12 @@ class GitLayerImpl(
     /** Runs a `git worktree <params>` command and returns the raw result. */
     private fun runRaw(vararg params: String) =
         Git.getInstance().runCommand(
-            GitLineHandler(project, gitRoot, GitCommand.WORKTREE).also {
+            GitLineHandler(project, requireRoot(), GitCommand.WORKTREE).also {
                 it.addParameters(*params)
             }
         )
 
-    // -------------------------------------------------------------------------
-    // Porcelain parser
-    // -------------------------------------------------------------------------
+    // ── Porcelain parser ──────────────────────────────────────────────────────
 
     /**
      * Parses the output of `git worktree list --porcelain`.

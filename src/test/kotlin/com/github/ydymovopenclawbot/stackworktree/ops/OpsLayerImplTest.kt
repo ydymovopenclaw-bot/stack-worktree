@@ -5,9 +5,11 @@ import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.RebaseResult
 import com.github.ydymovopenclawbot.stackworktree.git.Worktree
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
+import com.github.ydymovopenclawbot.stackworktree.state.PluginState
 import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
 import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackStateStore
+import com.github.ydymovopenclawbot.stackworktree.state.TrackedBranchNode
 import com.intellij.openapi.project.Project
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -15,25 +17,196 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.lang.reflect.Proxy
+import kotlin.test.assertFailsWith
 
-/**
- * Unit tests for [OpsLayerImpl] using hand-written fakes.
- *
- * No IntelliJ Platform runtime is required: [gitLayerOverride] and [stateStoreOverride]
- * are injected directly, so the [Project] parameter is never dereferenced.
- */
 class OpsLayerImplTest {
 
-    // -------------------------------------------------------------------------
-    // Fakes
-    // -------------------------------------------------------------------------
+    // ── Algorithms (track/untrack pure-function tests) ────────────────────────
 
-    /**
-     * Records every call made to [GitLayer] and returns configurable [RebaseResult]s.
-     *
-     * [branchShas] maps branchName → current SHA; [resolveCommit] reads from it.
-     * [existingBranches] backs [branchExists]; [createBranch] populates both.
-     */
+    private val A = OpsLayerImpl.Algorithms
+
+    private fun stateWith(vararg nodes: TrackedBranchNode): PluginState =
+        PluginState(
+            trunkBranch     = "main",
+            trackedBranches = nodes.associateBy { it.name },
+        )
+
+    @Test
+    fun `track basic — adds node as child of trunk`() {
+        val state  = stateWith()
+        val result = A.applyTrackBranch(state, "feature-a", "main")
+
+        val node = result.trackedBranches["feature-a"]
+        assertEquals("feature-a", node?.name)
+        assertEquals("main", node?.parentName)
+        assertTrue(node?.children?.isEmpty() == true)
+    }
+
+    @Test
+    fun `track basic — does not create parent node when parent is trunk`() {
+        val state  = stateWith()
+        val result = A.applyTrackBranch(state, "feature-a", "main")
+
+        assertNull(result.trackedBranches["main"])
+    }
+
+    @Test
+    fun `track updates parent's children list`() {
+        val state = stateWith(
+            TrackedBranchNode(name = "feature-a", parentName = "main"),
+        )
+        val result = A.applyTrackBranch(state, "feature-b", "feature-a")
+
+        val parent = result.trackedBranches["feature-a"]
+        assertEquals(listOf("feature-b"), parent?.children)
+    }
+
+    @Test
+    fun `track appends to existing children in order`() {
+        val state = stateWith(
+            TrackedBranchNode(
+                name       = "feature-a",
+                parentName = "main",
+                children   = listOf("feature-b"),
+            ),
+            TrackedBranchNode(name = "feature-b", parentName = "feature-a"),
+        )
+        val result = A.applyTrackBranch(state, "feature-c", "feature-a")
+
+        val parent = result.trackedBranches["feature-a"]
+        assertEquals(listOf("feature-b", "feature-c"), parent?.children)
+    }
+
+    @Test
+    fun `track duplicate branch throws IllegalArgumentException`() {
+        val state = stateWith(
+            TrackedBranchNode(name = "feature-a", parentName = "main"),
+        )
+        assertFailsWith<IllegalArgumentException> {
+            A.applyTrackBranch(state, "feature-a", "main")
+        }
+    }
+
+    @Test
+    fun `track with invalid parent throws IllegalArgumentException`() {
+        val state = stateWith()
+        assertFailsWith<IllegalArgumentException> {
+            A.applyTrackBranch(state, "feature-a", "not-trunk-or-tracked")
+        }
+    }
+
+    @Test
+    fun `track preserves existing state fields`() {
+        val state = stateWith(
+            TrackedBranchNode(name = "feature-a", parentName = "main"),
+        ).copy(activeWorktrees = listOf("/some/path"), lastUsedBranch = "feature-a")
+
+        val result = A.applyTrackBranch(state, "feature-b", "main")
+
+        assertEquals(listOf("/some/path"), result.activeWorktrees)
+        assertEquals("feature-a", result.lastUsedBranch)
+    }
+
+    @Test
+    fun `untrack leaf — removes node`() {
+        val state = stateWith(
+            TrackedBranchNode(name = "feature-a", parentName = "main"),
+        )
+        val result = A.applyUntrackBranch(state, "feature-a")
+
+        assertTrue(result.trackedBranches.isEmpty())
+    }
+
+    @Test
+    fun `untrack leaf — removes branch from parent's children list`() {
+        val state = stateWith(
+            TrackedBranchNode(
+                name       = "feature-a",
+                parentName = "main",
+                children   = listOf("feature-b"),
+            ),
+            TrackedBranchNode(name = "feature-b", parentName = "feature-a"),
+        )
+        val result = A.applyUntrackBranch(state, "feature-b")
+
+        val parent = result.trackedBranches["feature-a"]
+        assertTrue(parent?.children?.isEmpty() == true)
+    }
+
+    @Test
+    fun `untrack mid-stack — children re-parented to grandparent`() {
+        val state = stateWith(
+            TrackedBranchNode(
+                name       = "A",
+                parentName = "main",
+                children   = listOf("B"),
+            ),
+            TrackedBranchNode(
+                name       = "B",
+                parentName = "A",
+                children   = listOf("C"),
+            ),
+            TrackedBranchNode(name = "C", parentName = "B"),
+        )
+        val result = A.applyUntrackBranch(state, "B")
+
+        assertNull(result.trackedBranches["B"])
+
+        assertEquals("A", result.trackedBranches["C"]?.parentName)
+
+        assertEquals(listOf("C"), result.trackedBranches["A"]?.children)
+    }
+
+    @Test
+    fun `untrack mid-stack — multiple children spliced in order`() {
+        val state = stateWith(
+            TrackedBranchNode(
+                name       = "A",
+                parentName = "main",
+                children   = listOf("B", "X"),
+            ),
+            TrackedBranchNode(
+                name       = "B",
+                parentName = "A",
+                children   = listOf("C", "D"),
+            ),
+            TrackedBranchNode(name = "X", parentName = "A"),
+            TrackedBranchNode(name = "C", parentName = "B"),
+            TrackedBranchNode(name = "D", parentName = "B"),
+        )
+        val result = A.applyUntrackBranch(state, "B")
+
+        assertEquals(listOf("C", "D", "X"), result.trackedBranches["A"]?.children)
+        assertEquals("A", result.trackedBranches["C"]?.parentName)
+        assertEquals("A", result.trackedBranches["D"]?.parentName)
+    }
+
+    @Test
+    fun `untrack root-level branch — children re-parented to trunk`() {
+        val state = stateWith(
+            TrackedBranchNode(
+                name       = "A",
+                parentName = "main",
+                children   = listOf("B"),
+            ),
+            TrackedBranchNode(name = "B", parentName = "A"),
+        )
+        val result = A.applyUntrackBranch(state, "A")
+
+        assertEquals("main", result.trackedBranches["B"]?.parentName)
+        assertNull(result.trackedBranches["A"])
+    }
+
+    @Test
+    fun `untrack non-tracked branch throws IllegalArgumentException`() {
+        val state = stateWith()
+        assertFailsWith<IllegalArgumentException> {
+            A.applyUntrackBranch(state, "does-not-exist")
+        }
+    }
+
+    // ── Insert operations (insertBranchAbove / insertBranchBelow) ─────────────
+
     private class FakeGitLayer(
         val branchShas: MutableMap<String, String> = mutableMapOf(),
         val existingBranches: MutableSet<String> = mutableSetOf(),
@@ -51,11 +224,11 @@ class OpsLayerImplTest {
         override fun worktreeList(): List<Worktree>                        = unsupported()
         override fun worktreePrune()                                       = unsupported()
         override fun aheadBehind(branch: String, parent: String): AheadBehind = unsupported()
+        override fun listLocalBranches(): List<String>                     = emptyList()
 
         override fun createBranch(branchName: String, baseBranch: String) {
             createdBranches += branchName to baseBranch
             existingBranches += branchName
-            // Inherit the base's SHA so resolveCommit works on the new branch.
             branchShas[branchName] = branchShas[baseBranch] ?: "sha-$baseBranch"
         }
 
@@ -90,7 +263,6 @@ class OpsLayerImplTest {
         private fun unsupported(): Nothing = throw UnsupportedOperationException()
     }
 
-    /** In-memory [StackStateStore] that records every [write] call. */
     private class FakeStateStore(initial: StackState? = null) : StackStateStore {
         private var stored: StackState? = initial
         val writeHistory = mutableListOf<StackState>()
@@ -99,10 +271,6 @@ class OpsLayerImplTest {
         override fun write(state: StackState) { stored = state; writeHistory += state }
     }
 
-    /**
-     * A non-null [Project] proxy that throws [UnsupportedOperationException] on any call.
-     * Safe to pass because [OpsLayerImpl] never touches `project` when both overrides are set.
-     */
     private val noProject: Project = Proxy.newProxyInstance(
         Project::class.java.classLoader,
         arrayOf(Project::class.java),
@@ -113,11 +281,6 @@ class OpsLayerImplTest {
     private fun makeOps(git: FakeGitLayer, store: FakeStateStore) =
         OpsLayerImpl(noProject, git, store)
 
-    // -------------------------------------------------------------------------
-    // Fixture helpers
-    // -------------------------------------------------------------------------
-
-    /** main → feat */
     private fun linearState() = StackState(
         repoConfig = RepoConfig(trunk = "main", remote = "origin"),
         branches = mapOf(
@@ -126,7 +289,6 @@ class OpsLayerImplTest {
         ),
     )
 
-    /** main → feat → (c1, c2) */
     private fun fanState() = StackState(
         repoConfig = RepoConfig(trunk = "main", remote = "origin"),
         branches = mapOf(
@@ -137,7 +299,6 @@ class OpsLayerImplTest {
         ),
     )
 
-    /** main → feat → fix  (3-level) */
     private fun chainState() = StackState(
         repoConfig = RepoConfig(trunk = "main", remote = "origin"),
         branches = mapOf(
@@ -146,10 +307,6 @@ class OpsLayerImplTest {
             "fix"  to BranchNode("fix",  parent = "feat"),
         ),
     )
-
-    // =========================================================================
-    // insertBranchAbove — success
-    // =========================================================================
 
     @Test
     fun `insertBranchAbove - creates branch from parent`() {
@@ -182,7 +339,6 @@ class OpsLayerImplTest {
 
     @Test
     fun `insertBranchAbove - cascade uses pre-rebase SHA of parent as upstream`() {
-        // main → feat → fix; insert "mid" above feat
         val git = FakeGitLayer(
             branchShas = mutableMapOf(
                 "main" to "sha-main",
@@ -192,9 +348,7 @@ class OpsLayerImplTest {
         )
         makeOps(git, FakeStateStore(chainState())).insertBranchAbove("feat", "mid")
 
-        // Call 0: feat --onto mid, upstream = main (old parent)
         assertEquals(Triple("feat", "mid", "main"), git.rebaseCalls[0])
-        // Call 1 (cascade): fix --onto feat, upstream = SHA of feat *before* it was rebased
         assertEquals(Triple("fix", "feat", "sha-feat-before"), git.rebaseCalls[1])
     }
 
@@ -213,10 +367,6 @@ class OpsLayerImplTest {
         assertNull(store.writeHistory.single().branches["before-main"]?.parent)
     }
 
-    // =========================================================================
-    // insertBranchAbove — abort / rollback
-    // =========================================================================
-
     @Test
     fun `insertBranchAbove - deletes new branch and writes no state on target-rebase abort`() {
         val git = FakeGitLayer(
@@ -232,7 +382,6 @@ class OpsLayerImplTest {
 
     @Test
     fun `insertBranchAbove - cascade abort resets targetBranch and deletes new branch`() {
-        // feat succeeds, fix aborts → must reset feat + delete mid
         val oldFeatTip = "sha-feat-before"
         val git = FakeGitLayer(
             branchShas = mutableMapOf("main" to "sha-main", "feat" to oldFeatTip, "fix" to "sha-fix"),
@@ -250,10 +399,6 @@ class OpsLayerImplTest {
         )
         assertTrue(store.writeHistory.isEmpty())
     }
-
-    // =========================================================================
-    // insertBranchBelow — success
-    // =========================================================================
 
     @Test
     fun `insertBranchBelow - creates branch from target`() {
@@ -304,10 +449,6 @@ class OpsLayerImplTest {
         assertEquals("mid",              saved.branches["c2"]!!.parent)
     }
 
-    // =========================================================================
-    // insertBranchBelow — abort / rollback
-    // =========================================================================
-
     @Test
     fun `insertBranchBelow - deletes new branch and writes no state when first child aborts`() {
         val git = FakeGitLayer(
@@ -321,13 +462,11 @@ class OpsLayerImplTest {
 
         assertTrue("mid" in git.deletedBranches)
         assertTrue(store.writeHistory.isEmpty())
-        // c1 itself failed — no completed rebases to roll back
         assertTrue(git.resetCalls.isEmpty(), "No resetBranch when first child aborts")
     }
 
     @Test
     fun `insertBranchBelow - resets already-rebased children when mid-loop abort occurs`() {
-        // c1 succeeds, c2 aborts → c1 must be reset to its pre-rebase SHA
         val oldC1Tip = "sha-c1-before"
         val git = FakeGitLayer(
             branchShas = mutableMapOf("feat" to "sha-feat", "c1" to oldC1Tip, "c2" to "sha-c2"),
@@ -345,10 +484,6 @@ class OpsLayerImplTest {
         )
         assertTrue(store.writeHistory.isEmpty())
     }
-
-    // =========================================================================
-    // requireBranchAbsent — git branch check
-    // =========================================================================
 
     @Test
     fun `insertBranchAbove - throws IllegalArgumentException when branch exists in git but not in state`() {

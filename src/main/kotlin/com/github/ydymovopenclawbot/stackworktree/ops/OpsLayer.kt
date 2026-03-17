@@ -81,4 +81,24 @@ interface OpsLayer {
         createWorktree: Boolean,
         worktreePath: String?,
     ): StackNodeData
+
+    /**
+     * Marks [branch] as tracked, inserting it as a child of [parentBranch].
+     *
+     * [parentBranch] must equal [com.github.ydymovopenclawbot.stackworktree.state.PluginState.trunkBranch]
+     * or already be present in the tracked-branch map.
+     *
+     * @throws IllegalArgumentException if [branch] is already tracked or [parentBranch] is invalid.
+     */
+    fun trackBranch(branch: String, parentBranch: String)
+
+    /**
+     * Removes [branch] from the tracked tree without deleting the underlying git branch.
+     *
+     * Children of [branch] are re-parented to [branch]'s own parent, preserving their
+     * relative order at the position where [branch] was in the parent's children list.
+     *
+     * @throws IllegalArgumentException if [branch] is not currently tracked.
+     */
+    fun untrackBranch(branch: String)
 }

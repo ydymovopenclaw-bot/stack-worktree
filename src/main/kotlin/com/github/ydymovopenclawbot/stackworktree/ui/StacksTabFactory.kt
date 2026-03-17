@@ -1,13 +1,17 @@
 package com.github.ydymovopenclawbot.stackworktree.ui
 
-import com.github.ydymovopenclawbot.stackworktree.actions.AddBranchToStackAction
 import com.github.ydymovopenclawbot.stackworktree.git.AheadBehindCalculator
 import com.github.ydymovopenclawbot.stackworktree.git.BranchDetailService
-import com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl
+import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.IntelliJGitRunner
-import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
+import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.startup.StackGitChangeListener
+import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
+import com.github.ydymovopenclawbot.stackworktree.state.PluginState
+import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
+import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackTreeStateListener
+import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
 import com.github.ydymovopenclawbot.stackworktree.state.StateStorage
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.HealthStatus
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphData
@@ -17,6 +21,7 @@ import com.github.ydymovopenclawbot.stackworktree.actions.StackDataKeys
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.DataProvider
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ui.ChangesViewContentProvider
@@ -30,11 +35,12 @@ import com.intellij.util.messages.MessageBusConnection
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import java.awt.BorderLayout
-import java.awt.event.MouseEvent
+import java.awt.Point
 import java.nio.file.Paths
 import javax.swing.JComponent
 import javax.swing.JMenuItem
 import javax.swing.JPopupMenu
+import javax.swing.JSeparator
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingUtilities
 
@@ -48,11 +54,8 @@ private val LOG = logger<StacksTabFactory>()
  * - **Left**  – [StackGraphPanel]: the stack graph that emits node-selection events.
  * - **Right** – [BranchDetailPanel]: shows metadata for the selected branch.
  *
- * Selecting a node in the graph triggers [BranchDetailService.loadNode] on a pooled thread,
- * then updates the detail panel on the EDT.
- *
- * Right-clicking a node shows a context menu with the "Add Branch to Stack" action.
- * On success [performRefresh] is called to reload the graph from persistent state.
+ * Selecting a node triggers [BranchDetailService.loadNode] on a pooled thread, then
+ * updates the detail panel on the EDT.
  *
  * On [initContent] the panel subscribes to:
  * - [GitRepository.GIT_REPO_CHANGE] so the graph auto-refreshes on every commit, checkout,
@@ -61,7 +64,19 @@ private val LOG = logger<StacksTabFactory>()
  *   [com.github.ydymovopenclawbot.stackworktree.actions.NewStackAction] (or any other writer)
  *   persists new state.
  *
- * @param project Injected by the platform via [com.intellij.openapi.vcs.changes.ui.ChangesViewContentEP].
+ * Right-clicking a node shows a context menu:
+ * - **Insert Branch Above / Below** — registered actions via `StackWorktree.StackBranchPopup`
+ *   group (installed via [PopupHandler]).
+ * - **Track Branch…** — always available; opens [TrackBranchDialog] to add an untracked
+ *   local branch to the [StateLayer] tree.
+ * - **Untrack Branch** — only for nodes present in [StateLayer.load].trackedBranches;
+ *   removes the node via [OpsLayer.untrackBranch] without deleting the git branch.
+ *
+ * The graph auto-refreshes on [GitRepository.GIT_REPO_CHANGE] (commit / checkout /
+ * rebase / fetch / pull) and on [STACK_STATE_TOPIC] (track / untrack operations).
+ *
+ * @param project Injected by the platform via
+ *   [com.intellij.openapi.vcs.changes.ui.ChangesViewContentEP].
  */
 class StacksTabFactory(private val project: Project) : ChangesViewContentProvider {
 
@@ -73,28 +88,27 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
      * Per-repository helper objects whose lifetime matches the open Stacks tab.
      *
      * Hoisted here so that [AheadBehindCalculator]'s TTL cache survives across
-     * consecutive [performRefresh] calls.  Stored as a [RefreshHelpers] record keyed
-     * to the repository root path; the record is replaced if the root changes (rare,
-     * but possible when the project re-opens against a different clone).
+     * consecutive [performRefresh] calls. Stored keyed to the repository root path;
+     * replaced if the root changes (rare, but possible when the project re-opens
+     * against a different clone).
      *
-     * Volatile so pooled-thread readers always see the latest reference written by
-     * any thread; the actual construction is guarded by [synchronized] in
-     * [getOrCreateHelpers] to prevent duplicate initialisation.
+     * Volatile so pooled-thread readers always see the latest reference; construction
+     * is guarded by [synchronized] in [getOrCreateHelpers] to prevent duplicates.
      */
     @Volatile
     private var helpers: RefreshHelpers? = null
 
     private data class RefreshHelpers(
         val repoRootPath: String,
-        val gitLayer: GitLayerImpl,
+        val gitLayer: GitLayer,
         val calculator: AheadBehindCalculator,
         val storage: StateStorage,
         val service: BranchDetailService,
     )
 
     /**
-     * Returns the cached [RefreshHelpers] for [root], creating them on first access or when
-     * the repository root changes.  Double-checked locking keeps the fast path lock-free.
+     * Returns the cached [RefreshHelpers] for [root], creating them on first access or
+     * when the repository root changes. Double-checked locking keeps the fast path lock-free.
      */
     private fun getOrCreateHelpers(root: VirtualFile): RefreshHelpers {
         // Fast path: already initialised for this root (no lock needed).
@@ -102,13 +116,13 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         // Slow path: first call, or repo root changed.
         return synchronized(this) {
             helpers?.takeIf { it.repoRootPath == root.path } ?: run {
-                val gitLayer = GitLayerImpl(project, root)
+                val gitLayer = project.service<GitLayer>()
                 val fresh = RefreshHelpers(
                     repoRootPath = root.path,
-                    gitLayer = gitLayer,
-                    calculator = AheadBehindCalculator(gitLayer),
-                    storage = StateStorage(Paths.get(root.path), IntelliJGitRunner(project)),
-                    service = BranchDetailService(project),
+                    gitLayer     = gitLayer,
+                    calculator   = AheadBehindCalculator(gitLayer),
+                    storage      = StateStorage(Paths.get(root.path), IntelliJGitRunner(project)),
+                    service      = BranchDetailService(project),
                 )
                 helpers = fresh
                 fresh
@@ -116,23 +130,21 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         }
     }
 
-    // -------------------------------------------------------------------------
-    // ChangesViewContentProvider
-    // -------------------------------------------------------------------------
+    // ── ChangesViewContentProvider ────────────────────────────────────────────
 
     override fun initContent(): JComponent {
-        val graph = StackGraphPanel()
+        val graph  = StackGraphPanel()
         graphPanel = graph
-        val detail = BranchDetailPanel()
+        val detail  = BranchDetailPanel()
         detailPanel = detail
 
-        // Wire node selection: load branch details on a pooled thread, update panel on EDT.
+        // ── Node selection → load detail panel ───────────────────────────────
         graph.onNodeSelected = { node ->
             LOG.debug("Selected node: ${node.branchName}")
             ApplicationManager.getApplication().executeOnPooledThread {
-                val service = helpers?.service ?: return@executeOnPooledThread
+                val service      = helpers?.service ?: return@executeOnPooledThread
                 val worktreePath = service.worktreesByBranch()[node.branchName]
-                val stackNode = service.loadNode(node.branchName, worktreePath)
+                val stackNode    = service.loadNode(node.branchName, worktreePath)
                 SwingUtilities.invokeLater {
                     if (stackNode != null) detail.showNode(stackNode)
                     else detail.clearSelection()
@@ -144,19 +156,58 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         // Attach the stack branch context-menu for registered actions (Insert Branch Above/Below).
         PopupHandler.installPopupMenu(graph, "StackWorktree.StackBranchPopup", ActionPlaces.POPUP)
 
-        // Wire right-click context menu: "Add Branch to Stack".
-        graph.onNodeContextMenu = { node, event ->
-            showContextMenu(node, event)
+        // ── Right-click → context menu (track / untrack) ─────────────────────
+        val stateLayer = project.service<StateLayer>()
+        val opsLayer   = project.service<OpsLayer>()
+        val gitLayer   = project.service<GitLayer>()
+        graph.onContextMenu = { node, location ->
+            val popup = JPopupMenu()
+
+            // "Track Branch…" — always available.
+            // State is loaded inside the listener so it reflects any mutations that
+            // occurred between popup-open time and the moment the user clicks the item.
+            val trackItem = JMenuItem("Track Branch\u2026")
+            trackItem.addActionListener {
+                val currentState  = stateLayer.load()
+                val allBranches   = gitLayer.listLocalBranches()
+                val tracked       = currentState.trackedBranches.keys
+                val untracked     = allBranches.filter { it !in tracked && it != currentState.trunkBranch }
+                if (untracked.isEmpty()) return@addActionListener
+                val parentChoices = listOfNotNull(currentState.trunkBranch) + tracked.sorted()
+                val dialog = TrackBranchDialog(project, untracked, parentChoices)
+                if (dialog.showAndGet()) {
+                    opsLayer.trackBranch(dialog.selectedBranch, dialog.selectedParent)
+                }
+            }
+            popup.add(trackItem)
+
+            // "Untrack Branch" — only for tracked (non-trunk) nodes.
+            // Visibility is checked at popup-open time (acceptable: the popup was just
+            // opened, and OpsLayerImpl will reject an invalid untrack gracefully).
+            if (node != null) {
+                val openState = stateLayer.load()
+                if (node.branchName in openState.trackedBranches) {
+                    popup.add(JSeparator())
+                    val untrackItem = JMenuItem("Untrack Branch")
+                    untrackItem.addActionListener { opsLayer.untrackBranch(node.branchName) }
+                    popup.add(untrackItem)
+                }
+            }
+
+            popup.show(graph, location.x, location.y)
         }
 
         val toolbar = StackTreeToolbar.create("StacksTab") { performRefresh() }
         toolbar.targetComponent = graph
 
-        // Subscribe to both git-repo changes and explicit stack-state writes so the graph
-        // stays in sync regardless of what triggers a state change.
+        // Subscribe to git-repo changes, NewStack writes, AND track/untrack mutations
+        // so the graph stays in sync regardless of what triggers a state change.
         connection = project.messageBus.connect().also { conn ->
             conn.subscribe(GitRepository.GIT_REPO_CHANGE, StackGitChangeListener { performRefresh() })
             conn.subscribe(StackTreeStateListener.TOPIC, StackTreeStateListener { performRefresh() })
+            conn.subscribe(STACK_STATE_TOPIC, object : StackStateListener {
+                override fun stateChanged() { performRefresh() }
+            })
         }
 
         // Show current state immediately without waiting for the first git event.
@@ -169,7 +220,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED,
             )
             secondComponent = detail
-            dividerWidth = 3
+            dividerWidth    = 3
         }
 
         return object : JBPanel<JBPanel<*>>(BorderLayout()), DataProvider {
@@ -187,20 +238,25 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
 
     override fun disposeContent() {
         connection?.disconnect()
-        connection = null
-        graphPanel = null
+        connection  = null
+        graphPanel  = null
         detailPanel = null
-        helpers = null
+        helpers     = null
     }
 
-    // -------------------------------------------------------------------------
-    // Refresh pipeline
-    // -------------------------------------------------------------------------
+    // ── Refresh pipeline ──────────────────────────────────────────────────────
 
     /**
-     * Full refresh: reads [com.github.ydymovopenclawbot.stackworktree.state.StackState] from
-     * `refs/stacktree/state`, recalculates ahead/behind counts via [AheadBehindCalculator],
-     * converts to [StackGraphData] and [StackViewModel], then re-renders on the EDT.
+     * Full refresh: resolves the effective [StackState] (preferring [StateLayer] data
+     * written by track/untrack operations over the git-refs-based [StateStorage]),
+     * recalculates ahead/behind counts via [AheadBehindCalculator], converts to
+     * [StackGraphData] and [StackViewModel], then re-renders on the EDT.
+     *
+     * **Source precedence:**
+     * 1. [StateLayer.load].trackedBranches — written by [com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl]
+     *    on every track/untrack mutation; always up-to-date after a [STACK_STATE_TOPIC] event.
+     * 2. [StateStorage.read] — git-refs-based store used by earlier plugin versions or
+     *    richer metadata (PR info, health). Used only when trackedBranches is empty.
      *
      * Runs git I/O on a pooled thread; switches back to the EDT for all UI updates.
      */
@@ -212,12 +268,18 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     renderEmpty(); return@executeOnPooledThread
                 }
 
-                val h = getOrCreateHelpers(repo.root)
-                val state = h.storage.read()
+                val h             = getOrCreateHelpers(repo.root)
                 val currentBranch = repo.currentBranchName
 
-                // Build branch → parent map from the persisted graph.
-                // BranchNode.parent is null only for the trunk node.
+                // Prefer StateLayer (kept in sync by OpsLayerImpl) over StateStorage so
+                // that tracked branches are immediately visible after track/untrack.
+                val pluginState = project.service<StateLayer>().load()
+                val state: StackState? = when {
+                    pluginState.trackedBranches.isNotEmpty() -> synthesizeStackState(pluginState)
+                    else                                     -> h.storage.read()
+                }
+
+                // Build branch → parent map from the resolved graph.
                 val branchToParent: Map<String, String> = state?.branches?.values
                     ?.mapNotNull { node -> node.parent?.let { node.name to it } }
                     ?.toMap()
@@ -231,18 +293,18 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
 
                 // Build StackGraphData for the visual panel.
                 val nodes: List<StackNodeData> = state?.branches?.values?.map { branchNode ->
-                    val ab = aheadBehind[branchNode.name]
+                    val ab     = aheadBehind[branchNode.name]
                     val health = when {
                         ab != null && ab.behind > 0 -> HealthStatus.STALE
-                        else -> HealthStatus.CLEAN
+                        else                        -> HealthStatus.CLEAN
                     }
                     StackNodeData(
-                        id = branchNode.name,
-                        branchName = branchNode.name,
-                        parentId = branchNode.parent,
-                        ahead = ab?.ahead ?: 0,
-                        behind = ab?.behind ?: 0,
-                        healthStatus = health,
+                        id              = branchNode.name,
+                        branchName      = branchNode.name,
+                        parentId        = branchNode.parent,
+                        ahead           = ab?.ahead ?: 0,
+                        behind          = ab?.behind ?: 0,
+                        healthStatus    = health,
                         isCurrentBranch = branchNode.name == currentBranch,
                     )
                 } ?: emptyList()
@@ -269,17 +331,17 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 val viewModel = StackViewModel(
                     stacks = if (orderedBranches.isEmpty()) emptyList() else listOf(
                         StackViewEntry(
-                            name = state!!.repoConfig.trunk,
+                            name     = state!!.repoConfig.trunk,
                             branches = orderedBranches.map { branch ->
                                 BranchView(
-                                    name = branch,
+                                    name            = branch,
                                     isCurrentBranch = branch == currentBranch,
-                                    aheadBehind = aheadBehind[branch],
+                                    aheadBehind     = aheadBehind[branch],
                                 )
                             },
                         )
                     ),
-                    activeStack = null,
+                    activeStack   = null,
                     currentBranch = currentBranch,
                 )
 
@@ -294,6 +356,22 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         }
     }
 
+    /**
+     * Converts [PluginState.trackedBranches] into a [StackState] suitable for the graph
+     * renderer.  Fields not tracked by [StateLayer] (PR info, health, worktree path) are
+     * left at their defaults; ahead/behind is computed separately by [AheadBehindCalculator].
+     */
+    private fun synthesizeStackState(pluginState: PluginState): StackState {
+        val trunk = pluginState.trunkBranch ?: "main"
+        val branches = pluginState.trackedBranches.mapValues { (_, node) ->
+            BranchNode(name = node.name, parent = node.parentName, children = node.children)
+        }
+        return StackState(
+            repoConfig = RepoConfig(trunk = trunk, remote = "origin"),
+            branches   = branches,
+        )
+    }
+
     private fun renderEmpty() {
         ApplicationManager.getApplication().invokeLater {
             graphPanel?.updateGraph(StackGraphData(emptyList()))
@@ -303,34 +381,5 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     private fun updateStatusBar(model: StackViewModel) {
         val bar = WindowManager.getInstance().getStatusBar(project) ?: return
         (bar.getWidget(StackStatusBarWidget.ID) as? StackStatusBarWidget)?.updateState(model)
-    }
-
-    // -------------------------------------------------------------------------
-    // Context menu
-    // -------------------------------------------------------------------------
-
-    /**
-     * Shows the right-click context menu anchored at the event position.
-     *
-     * Passes an [OpsLayerImpl] to [AddBranchToStackAction] so the action goes through
-     * the proper orchestration layer rather than touching git directly.
-     * On success, [performRefresh] reloads the full graph from persistent state so
-     * the new branch appears with accurate ahead/behind counts.
-     */
-    private fun showContextMenu(node: StackNodeData, event: MouseEvent) {
-        val h = helpers ?: return
-        val opsLayer = OpsLayerImpl(project, h.gitLayer, h.storage)
-        val menu = JPopupMenu()
-        val addItem = JMenuItem("Add Branch to Stack")
-        addItem.addActionListener {
-            AddBranchToStackAction(
-                project    = project,
-                parentNode = node,
-                opsLayer   = opsLayer,
-                onSuccess  = { performRefresh() },
-            ).perform()
-        }
-        menu.add(addItem)
-        menu.show(event.component, event.x, event.y)
     }
 }
