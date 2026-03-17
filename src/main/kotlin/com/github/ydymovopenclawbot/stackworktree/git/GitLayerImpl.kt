@@ -93,6 +93,11 @@ class GitLayerImpl(
         return parsePorcelain(lines)
     }
 
+    // Delegate to the companion so the implementation is accessible from unit tests
+    // without requiring a live IntelliJ project.
+    private fun parsePorcelain(lines: List<String>): List<Worktree> =
+        Companion.parsePorcelain(lines)
+
     override fun worktreePrune() {
         runOrThrow("prune")
     }
@@ -260,41 +265,56 @@ class GitLayerImpl(
 
     // ── Porcelain parser ──────────────────────────────────────────────────────
 
-    /**
-     * Parses the output of `git worktree list --porcelain`.
-     *
-     * Each worktree block looks like (fields separated by blank lines):
-     * ```
-     * worktree /abs/path
-     * HEAD <sha>
-     * branch refs/heads/<name>   <- or "detached"
-     * locked [optional reason]   <- optional
-     * ```
-     */
-    private fun parsePorcelain(lines: List<String>): List<Worktree> {
-        val worktrees = mutableListOf<Worktree>()
-        var path = ""; var head = ""; var branch = ""; var locked = false
+    companion object {
 
-        // Append a sentinel blank line so the last block is always flushed.
-        for (line in lines + "") {
-            when {
-                line.startsWith("worktree ") -> {
-                    path = line.removePrefix("worktree ")
-                    head = ""; branch = ""; locked = false
-                }
-                line.startsWith("HEAD ")     -> head   = line.removePrefix("HEAD ")
-                // Strip the well-known heads prefix; fall back to the full ref for
-                // anything outside refs/heads/ (e.g. refs/tags/ from detached-style adds).
-                line.startsWith("branch ")  -> branch = line.removePrefix("branch ")
-                    .removePrefix("refs/heads/")
-                line == "detached"          -> branch = ""
-                line.startsWith("locked")   -> locked = true
-                line.isBlank() && path.isNotEmpty() -> {
-                    worktrees += Worktree(path, branch, head, locked)
-                    path = ""
+        /**
+         * Parses the output of `git worktree list --porcelain`.
+         *
+         * Each worktree block looks like (fields separated by blank lines):
+         * ```
+         * worktree /abs/path
+         * HEAD <sha>
+         * branch refs/heads/<name>   <- or "detached" / "bare"
+         * locked [optional reason]   <- optional
+         * ```
+         *
+         * Exposed as `internal` so it can be tested from [PorcelainParserTest]
+         * without requiring a live IntelliJ project.
+         */
+        internal fun parsePorcelain(lines: List<String>): List<Worktree> {
+            val worktrees = mutableListOf<Worktree>()
+            var path = ""; var head = ""; var branch = ""; var locked = false
+
+            // Append a sentinel blank line so the last block is always flushed.
+            for (line in lines + "") {
+                when {
+                    line.startsWith("worktree ") -> {
+                        path = line.removePrefix("worktree ")
+                        head = ""; branch = ""; locked = false
+                    }
+                    line.startsWith("HEAD ")     -> head   = line.removePrefix("HEAD ")
+                    // Strip the well-known heads prefix; fall back to the full ref for
+                    // anything outside refs/heads/ (e.g. refs/tags/ from detached-style adds).
+                    line.startsWith("branch ")   -> branch = line.removePrefix("branch ")
+                        .removePrefix("refs/heads/")
+                    line == "detached"           -> branch = ""
+                    // Bare worktrees have no checked-out branch; treat them identically to
+                    // a detached HEAD for display purposes (branch stays empty).
+                    line == "bare"               -> { /* bare worktree — no branch, leave branch empty */ }
+                    line.startsWith("locked")    -> locked = true
+                    line.isBlank() && path.isNotEmpty() -> {
+                        worktrees += Worktree(
+                            path     = path,
+                            branch   = branch,
+                            head     = head,
+                            isLocked = locked,
+                            isMain   = worktrees.isEmpty(),
+                        )
+                        path = ""
+                    }
                 }
             }
+            return worktrees
         }
-        return worktrees
     }
 }

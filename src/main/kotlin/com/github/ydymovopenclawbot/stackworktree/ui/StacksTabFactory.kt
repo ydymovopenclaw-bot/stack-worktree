@@ -4,6 +4,7 @@ import com.github.ydymovopenclawbot.stackworktree.git.AheadBehindCalculator
 import com.github.ydymovopenclawbot.stackworktree.git.BranchDetailService
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.IntelliJGitRunner
+import com.github.ydymovopenclawbot.stackworktree.git.Worktree
 import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.ops.WorktreeOps
@@ -58,10 +59,14 @@ private val LOG = logger<StacksTabFactory>()
 /**
  * Content provider for the "Stacks" tab in the VCS Changes view.
  *
- * Renders a [JBSplitter] with a [StackTreeToolbar] above it:
- * - **NORTH** – toolbar (New Stack / Add Branch / Restack* / Submit* / Sync* / Refresh).
- * - **Left**  – [StackGraphPanel]: the stack graph that emits node-selection events.
- * - **Right** – [BranchDetailPanel]: shows metadata for the selected branch.
+ * Renders a [JBSplitter] with a [StackTreeToolbar] above it and a [WorktreeListPanel] below:
+ * - **NORTH**  – toolbar (New Stack / Add Branch / Restack* / Submit* / Sync* / Refresh).
+ * - **CENTER** – horizontal [JBSplitter]:
+ *     - **Left**  – [StackGraphPanel]: the stack graph that emits node-selection events.
+ *     - **Right** – [BranchDetailPanel]: shows metadata for the selected branch.
+ * - **SOUTH**  – [WorktreeListPanel]: collapsible list of all git worktrees (both
+ *     StackTree-managed and externally created); clicking a tracked row selects its
+ *     corresponding node in the graph.
  *
  * Selecting a node triggers [BranchDetailService.loadNode] on a pooled thread, then
  * updates the detail panel on the EDT.
@@ -97,6 +102,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
 
     private var graphPanel: StackGraphPanel? = null
     private var detailPanel: BranchDetailPanel? = null
+    private var worktreeListPanel: WorktreeListPanel? = null
     private var connection: MessageBusConnection? = null
 
     /**
@@ -198,6 +204,12 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         val toolbar = StackTreeToolbar.create("StacksTab") { performRefresh() }
         toolbar.targetComponent = graph
 
+        // Worktree list — clicking a tracked row selects its node in the graph.
+        val wtPanel = WorktreeListPanel(project) { wt ->
+            if (wt.branch.isNotEmpty()) graph.selectNode(wt.branch)
+        }
+        worktreeListPanel = wtPanel
+
         // Subscribe to git-repo changes, NewStack writes, AND track/untrack mutations
         // so the graph stays in sync regardless of what triggers a state change.
         connection = project.messageBus.connect().also { conn ->
@@ -225,6 +237,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             init {
                 add(toolbar.component, BorderLayout.NORTH)
                 add(splitter, BorderLayout.CENTER)
+                add(wtPanel, BorderLayout.SOUTH)
             }
 
             override fun getData(dataId: String): Any? = when {
@@ -239,7 +252,8 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         connection  = null
         graphPanel  = null
         detailPanel = null
-        helpers     = null
+        worktreeListPanel = null
+        helpers           = null
     }
 
     // ── Refresh pipeline ──────────────────────────────────────────────────────
@@ -308,6 +322,13 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     )
                 } ?: emptyList()
 
+                // Fetch all worktrees and identify which branches are tracked in the stack graph.
+                val worktrees: List<Worktree> = runCatching { h.gitLayer.worktreeList() }
+                    .getOrDefault(emptyList())
+                // Derive trackedBranches from the same resolved state so that the trunk branch
+                // (which has no parent and is absent from getAllParents().keys) is included.
+                val trackedBranches: Set<String> = state?.branches?.keys.orEmpty()
+
                 // Build StackViewModel for the status bar (ordered BFS from trunk).
                 val orderedBranches: List<String> = if (state == null) {
                     emptyList()
@@ -346,6 +367,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
 
                 ApplicationManager.getApplication().invokeLater {
                     graphPanel?.updateGraph(StackGraphData(nodes))
+                    worktreeListPanel?.refresh(worktrees, trackedBranches)
                     updateStatusBar(viewModel)
                 }
             } catch (e: Exception) {
