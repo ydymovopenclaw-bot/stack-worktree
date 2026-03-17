@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
 class StateStorage(
     private val root: Path,
     private val runner: GitRunner,
-) {
+) : StackStateStore {
     // ----------------------------------------------------------------------------------
     // Public API
     // ----------------------------------------------------------------------------------

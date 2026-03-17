@@ -9,6 +9,27 @@
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
+    <actions>
+        <!--
+          Context-menu action group shown when the user right-clicks a branch node
+          in the Stacks graph panel.  The group itself is not shown as a top-level
+          menu item; it is installed programmatically via PopupHandler in
+          StacksTabFactory.
+        -->
+        <group id="StackWorktree.StackBranchPopup"
+               text="Stack Branch Actions"
+               popup="true">
+            <action id="StackWorktree.InsertBranchAbove"
+                    class="com.github.ydymovopenclawbot.stackworktree.actions.InsertBranchAboveAction"
+                    text="Insert Branch Above"
+                    description="Insert a new branch between this branch and its parent, then rebase this branch onto it"/>
+            <action id="StackWorktree.InsertBranchBelow"
+                    class="com.github.ydymovopenclawbot.stackworktree.actions.InsertBranchBelowAction"
+                    text="Insert Branch Below"
+                    description="Insert a new branch as a child of this branch and re-parent all existing children to it"/>
+        </group>
+    </actions>
+
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow factoryClass="com.github.ydymovopenclawbot.stackworktree.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
         <postStartupActivity implementation="com.github.ydymovopenclawbot.stackworktree.startup.MyProjectActivity" />

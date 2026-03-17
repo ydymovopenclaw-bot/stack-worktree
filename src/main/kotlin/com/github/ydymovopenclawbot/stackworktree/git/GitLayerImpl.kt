@@ -5,6 +5,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
+import git4idea.merge.GitConflictResolver
 
 /**
  * Production [GitLayer] implementation that shells out to `git worktree` via
@@ -61,6 +62,99 @@ class GitLayerImpl(
         runOrThrow("prune")
     }
 
+    override fun resolveCommit(branchOrRef: String): String {
+        val handler = GitLineHandler(project, gitRoot, GitCommand.REV_PARSE).also {
+            it.addParameters("--verify", branchOrRef)
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) throw WorktreeCommandException(
+            "Failed to resolve '$branchOrRef': ${result.errorOutputAsJoinedString}"
+        )
+        return result.output.firstOrNull()?.trim()
+            ?: throw WorktreeCommandException("rev-parse returned no output for '$branchOrRef'")
+    }
+
+    override fun branchExists(branchName: String): Boolean {
+        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+            it.addParameters("--list", branchName)
+        }
+        val result = Git.getInstance().runCommand(handler)
+        // `git branch --list <name>` outputs "  <name>" or "* <name>" when found, empty when not.
+        return result.success() && result.output.any { line ->
+            line.trim().trimStart('*').trim() == branchName
+        }
+    }
+
+    override fun resetBranch(branchName: String, toCommit: String) {
+        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+            it.addParameters("-f", branchName, toCommit)
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) throw WorktreeCommandException(
+            "Failed to reset branch '$branchName' to '$toCommit': ${result.errorOutputAsJoinedString}"
+        )
+    }
+
+    override fun createBranch(branchName: String, baseBranch: String) {
+        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+            it.addParameters(branchName, baseBranch)
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) throw WorktreeCommandException(
+            "Failed to create branch '$branchName' from '$baseBranch': ${result.errorOutputAsJoinedString}"
+        )
+    }
+
+    override fun deleteBranch(branchName: String) {
+        val handler = GitLineHandler(project, gitRoot, GitCommand.BRANCH).also {
+            it.addParameters("-D", branchName)
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) throw WorktreeCommandException(
+            "Failed to delete branch '$branchName': ${result.errorOutputAsJoinedString}"
+        )
+    }
+
+    /**
+     * Runs `git rebase --onto <newBase> <upstream> <branch>`.
+     *
+     * When git detects conflicts it stops with a non-zero exit code.  We then open
+     * IntelliJ's [GitConflictResolver] which shows the three-pane merge dialog for each
+     * conflicted file.  If the user resolves all conflicts we continue with
+     * `git rebase --continue`; if they cancel we abort and return [RebaseResult.Aborted].
+     */
+    override fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult {
+        val handler = GitLineHandler(project, gitRoot, GitCommand.REBASE).also {
+            it.addParameters("--onto", newBase, upstream, branch)
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (result.success()) return RebaseResult.Success
+
+        // Attempt conflict resolution.  GitConflictResolver.merge() opens the
+        // three-pane merge dialog for every conflicted file; if there are none it
+        // returns true immediately (e.g. a hard error case).  We then abort the
+        // rebase so the repository is left in a clean state.
+        val params = GitConflictResolver.Params(project)
+        val resolver = GitConflictResolver(project, listOf(gitRoot), params)
+        val resolved = resolver.merge()
+        if (!resolved) {
+            abortRebase()
+            return RebaseResult.Aborted("User aborted conflict resolution during rebase of '$branch' onto '$newBase'")
+        }
+
+        // All conflicts resolved — continue the rebase.
+        val continueHandler = GitLineHandler(project, gitRoot, GitCommand.REBASE).also {
+            it.addParameters("--continue")
+        }
+        val continueResult = Git.getInstance().runCommand(continueHandler)
+        return if (continueResult.success()) {
+            RebaseResult.Success
+        } else {
+            abortRebase()
+            RebaseResult.Aborted("Rebase continue failed: ${continueResult.errorOutputAsJoinedString}")
+        }
+    }
+
     override fun aheadBehind(branch: String, parent: String): AheadBehind {
         val handler = GitLineHandler(project, gitRoot, GitCommand.REV_LIST).also {
             it.addParameters("--left-right", "--count", "$parent...$branch")
@@ -78,6 +172,15 @@ class GitLayerImpl(
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /** Runs `git rebase --abort`, swallowing errors (best-effort cleanup). */
+    private fun abortRebase() {
+        Git.getInstance().runCommand(
+            GitLineHandler(project, gitRoot, GitCommand.REBASE).also {
+                it.addParameters("--abort")
+            }
+        )
+    }
 
     /** Runs a `git worktree <params>` command, throwing on non-zero exit. */
     private fun runOrThrow(vararg params: String): List<String> {

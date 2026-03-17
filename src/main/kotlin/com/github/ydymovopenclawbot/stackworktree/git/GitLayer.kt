@@ -24,6 +24,67 @@ interface GitLayer {
      * - behind = commits in [parent] not in [branch]
      */
     fun aheadBehind(branch: String, parent: String): AheadBehind
+
+    /**
+     * Creates a new local branch [branchName] pointing at the current tip of [baseBranch].
+     * Throws [WorktreeCommandException] if the branch already exists or [baseBranch] is unknown.
+     */
+    fun createBranch(branchName: String, baseBranch: String)
+
+    /**
+     * Force-deletes the local branch [branchName] (`git branch -D`).
+     * Throws [WorktreeCommandException] if the branch does not exist.
+     */
+    fun deleteBranch(branchName: String)
+
+    /**
+     * Returns the full SHA-1 commit hash that [branchOrRef] currently points to.
+     * Throws [WorktreeCommandException] if [branchOrRef] is unknown.
+     */
+    fun resolveCommit(branchOrRef: String): String
+
+    /**
+     * Returns `true` if a local branch named [branchName] exists in the repository.
+     */
+    fun branchExists(branchName: String): Boolean
+
+    /**
+     * Force-resets the tip of local branch [branchName] to [toCommit] (`git branch -f`).
+     * Used for best-effort rollback after a failed rebase cascade.
+     * Throws [WorktreeCommandException] if [branchName] does not exist.
+     */
+    fun resetBranch(branchName: String, toCommit: String)
+
+    /**
+     * Rebases [branch] onto [newBase], replaying only the commits that are reachable
+     * from [branch] but not from [upstream] (the 3-argument `--onto` form):
+     *
+     * ```
+     * git rebase --onto <newBase> <upstream> <branch>
+     * ```
+     *
+     * When conflicts are detected, IntelliJ's merge dialog is opened automatically.
+     * The caller blocks until the user either resolves all conflicts and the rebase
+     * continues, or aborts (in which case [RebaseResult.Aborted] is returned and the
+     * repository is left in its pre-rebase state).
+     *
+     * @param branch   The branch to rebase (its tip will be moved).
+     * @param newBase  The new base commit/branch to rebase onto.
+     * @param upstream The old upstream; commits reachable from [upstream] are excluded.
+     */
+    fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult
+}
+
+/** Result of a [GitLayer.rebaseOnto] call. */
+sealed class RebaseResult {
+    /** The rebase completed without conflicts. */
+    object Success : RebaseResult()
+
+    /**
+     * The rebase was aborted — either the user dismissed the conflict dialog or an
+     * unresolvable error occurred.  The repository is in its original pre-rebase state.
+     */
+    data class Aborted(val reason: String) : RebaseResult()
 }
 
 /**
