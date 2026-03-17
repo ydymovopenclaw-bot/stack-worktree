@@ -1,11 +1,10 @@
 package com.github.ydymovopenclawbot.stackworktree.actions
 
 import com.github.ydymovopenclawbot.stackworktree.git.Worktree
-import com.intellij.ide.impl.OpenProjectTask
+import com.intellij.ide.impl.ProjectUtil as IdeProjectUtil
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.ProjectManager
-import com.intellij.openapi.project.ex.ProjectManagerEx
 import com.intellij.openapi.wm.WindowManager
 import java.nio.file.Path
 
@@ -51,11 +50,14 @@ class OpenInNewWindowAction : DumbAwareAction("Open in New Window") {
             }
 
             // Open the worktree root in a new frame, bypassing the "same/new window?" dialog.
-            // Use targetPath (already canonicalised) so that the opened project's basePath
-            // matches future duplicate-window checks even when the raw path contains symlinks.
-            ProjectManagerEx.getInstanceEx().openProject(
-                targetPath,
-                OpenProjectTask { forceOpenInNewFrame = true },
+            // ProjectUtil.openOrImport delegates OpenProjectTask construction to the platform,
+            // keeping our bytecode free of the @ApiStatus.Internal constructor whose signature
+            // changed between platform builds (would cause NoSuchMethodError if we called it
+            // directly via the inline OpenProjectTask { } DSL).
+            IdeProjectUtil.openOrImport(
+                targetPath.toString(),
+                /* projectToClose = */ null,
+                /* forceOpenInNewFrame = */ true,
             )
         }
     }

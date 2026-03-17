@@ -42,9 +42,10 @@ class OpenInTerminalAction : DumbAwareAction("Open in Terminal") {
         fun perform(project: Project, worktree: Worktree) {
             val tabName = if (worktree.branch.isNotEmpty()) "Worktree: ${worktree.branch}"
                           else "Worktree"
-            // createShellWidget(workingDirectory, tabName, requestFocus, deferSessionStart)
+            // createLocalShellWidget is the non-deprecated replacement for createShellWidget.
+            // It opens a new terminal tab pre-cd'd to the worktree path.
             TerminalToolWindowManager.getInstance(project)
-                .createShellWidget(worktree.path, tabName, /* requestFocus = */ true, /* deferSessionStartUntilUiShown = */ false)
+                .createLocalShellWidget(worktree.path, tabName)
         }
     }
 }
