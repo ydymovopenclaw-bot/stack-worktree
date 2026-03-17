@@ -123,12 +123,15 @@ class BranchOperationException(message: String) : RuntimeException(message)
  * @param branch   Checked-out branch name (short form), or empty string for a detached HEAD.
  * @param head     Full SHA of the current HEAD commit.
  * @param isLocked Whether the worktree is locked (prevents pruning / removal).
+ * @param isMain   `true` for the primary (first) worktree — the one that owns the `.git`
+ *                 directory.  All linked worktrees have `isMain == false`.
  */
 data class Worktree(
     val path: String,
     val branch: String,
     val head: String,
     val isLocked: Boolean,
+    val isMain: Boolean = false,
 )
 
 /** How many commits a branch is ahead of and behind its parent. */

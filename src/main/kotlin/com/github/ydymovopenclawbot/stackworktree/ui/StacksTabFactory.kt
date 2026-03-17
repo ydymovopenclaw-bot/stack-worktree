@@ -325,7 +325,9 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 // Fetch all worktrees and identify which branches are tracked in the stack graph.
                 val worktrees: List<Worktree> = runCatching { h.gitLayer.worktreeList() }
                     .getOrDefault(emptyList())
-                val trackedBranches: Set<String> = project.stackStateService().getAllParents().keys
+                // Derive trackedBranches from the same resolved state so that the trunk branch
+                // (which has no parent and is absent from getAllParents().keys) is included.
+                val trackedBranches: Set<String> = state?.branches?.keys.orEmpty()
 
                 // Build StackViewModel for the status bar (ordered BFS from trunk).
                 val orderedBranches: List<String> = if (state == null) {

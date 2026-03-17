@@ -174,8 +174,10 @@ class WorktreeListPanel(
         val leftFlow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply { isOpaque = false }
 
         val dirName = File(wt.path).name.ifEmpty { wt.path }
+        // The main worktree uses a slightly bolder path label so it is easy to identify.
         leftFlow.add(JBLabel(dirName).apply {
-            font        = JBUI.Fonts.label(11f)
+            font        = if (wt.isMain) JBUI.Fonts.label(11f).deriveFont(Font.BOLD)
+                          else           JBUI.Fonts.label(11f)
             foreground  = SECONDARY_TEXT
             toolTipText = wt.path
         })
