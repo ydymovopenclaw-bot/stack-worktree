@@ -19,6 +19,9 @@ class RestackAction : AnAction(
 
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabled = false
+        // Set text (shown in the floating toolbar tooltip) AND description (shown in the
+        // IDE status bar) so the "coming soon" message is visible in both places.
+        e.presentation.text = "Restack (coming soon)"
         e.presentation.description = "Coming soon: rebase all stacks onto the latest main"
     }
 

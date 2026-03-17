@@ -25,19 +25,31 @@ class StackGraphPanel : JBPanel<StackGraphPanel>(BorderLayout()) {
 
     init {
         add(JBScrollPane(contentPanel), BorderLayout.CENTER)
-        // Show empty state immediately so the panel is never blank.
-        render(StackViewModel(stacks = emptyList(), activeStack = null, currentBranch = null))
+        // Populate the empty-state placeholder immediately.  Construction happens inside
+        // StacksTabFactory.initContent(), which always runs on the EDT, so calling the
+        // internal helper directly avoids a spurious EDT assertion during initialisation.
+        applyModel(StackViewModel(stacks = emptyList(), activeStack = null, currentBranch = null))
     }
 
     /**
      * Re-renders the panel to reflect [model].
      *
-     * Must be called on the Event Dispatch Thread.
+     * Must be called on the Event Dispatch Thread (EDT).  Callers running on a pooled
+     * thread must dispatch here via
+     * [com.intellij.openapi.application.Application.invokeLater].
      */
     fun render(model: StackViewModel) {
         check(SwingUtilities.isEventDispatchThread()) {
             "StackGraphPanel.render() must be called on the EDT"
         }
+        applyModel(model)
+    }
+
+    /**
+     * Core rendering logic, separated from [render] so the constructor can seed the
+     * initial empty state without triggering the public EDT assertion.
+     */
+    private fun applyModel(model: StackViewModel) {
         contentPanel.removeAll()
 
         if (model.stacks.isEmpty()) {

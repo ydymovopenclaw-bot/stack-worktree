@@ -55,11 +55,14 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     /**
      * Per-repository helper objects whose lifetime matches the open Stacks tab.
      *
-     * Hoisted here so that [AheadBehindCalculator]'s TTL cache survives across consecutive
-     * [performRefresh] calls.  Replaced when the repository root changes (rare).
+     * Hoisted here so that [AheadBehindCalculator]'s TTL cache survives across
+     * consecutive [performRefresh] calls.  Stored as a [RefreshHelpers] record keyed
+     * to the repository root path; the record is replaced if the root changes (rare,
+     * but possible when the project re-opens against a different clone).
      *
-     * Volatile so pooled-thread readers always see the latest reference written by any thread;
-     * construction is guarded by [synchronized] in [getOrCreateHelpers].
+     * Volatile so pooled-thread readers always see the latest reference written by
+     * any thread; the actual construction is guarded by [synchronized] in
+     * [getOrCreateHelpers] to prevent duplicate initialisation.
      */
     @Volatile
     private var helpers: RefreshHelpers? = null
@@ -77,7 +80,9 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
      * the repository root changes.  Double-checked locking keeps the fast path lock-free.
      */
     private fun getOrCreateHelpers(root: VirtualFile): RefreshHelpers {
+        // Fast path: already initialised for this root (no lock needed).
         helpers?.takeIf { it.repoRootPath == root.path }?.let { return it }
+        // Slow path: first call, or repo root changed.
         return synchronized(this) {
             helpers?.takeIf { it.repoRootPath == root.path } ?: run {
                 val gitLayer = GitLayerImpl(project, root)

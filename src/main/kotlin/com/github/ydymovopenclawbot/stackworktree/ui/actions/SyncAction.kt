@@ -19,6 +19,7 @@ class SyncAction : AnAction(
 
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabled = false
+        e.presentation.text = "Sync (coming soon)"
         e.presentation.description = "Coming soon: sync stacks with the remote"
     }
 

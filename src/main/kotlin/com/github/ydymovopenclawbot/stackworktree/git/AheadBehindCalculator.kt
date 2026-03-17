@@ -1,14 +1,17 @@
 package com.github.ydymovopenclawbot.stackworktree.git
 
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Computes and caches ahead/behind counts for branches relative to their parents.
  *
- * Results are cached per branch for [ttlMs] milliseconds (default 30 s). The current
- * state is exposed as a [StateFlow] so the UI layer can observe changes reactively.
+ * Results are cached per branch for [ttlMs] milliseconds (default 30 s).
+ *
+ * Thread-safety: [calculate] and [invalidate] may be called concurrently from pooled
+ * background threads (e.g. rapid Refresh button clicks or burst GIT_REPO_CHANGE events).
+ * The backing store is a [ConcurrentHashMap] so individual reads and writes are atomic.
+ * The read-then-write check-and-set in [calculate] is wrapped in [synchronized] to prevent
+ * two threads from both seeing a stale entry and each issuing a redundant git call.
  *
  * @param gitLayer Low-level git operations provider.
  * @param ttlMs    How long a cached entry is considered fresh (milliseconds).
@@ -21,20 +24,16 @@ class AheadBehindCalculator(
 ) {
     private data class CachedEntry(val value: AheadBehind, val timestampMs: Long)
 
-    private val cache = mutableMapOf<String, CachedEntry>()
-
-    private val _state = MutableStateFlow<Map<String, AheadBehind>>(emptyMap())
-
-    /** Observable map of branch name → [AheadBehind]. Updated on every [calculate] call. */
-    val state: StateFlow<Map<String, AheadBehind>> = _state.asStateFlow()
+    // ConcurrentHashMap for safe concurrent reads; synchronized blocks guard the
+    // read-then-write sequences to avoid duplicate git calls under contention.
+    private val cache = ConcurrentHashMap<String, CachedEntry>()
 
     /**
      * Computes ahead/behind for each entry in [branches], where the map key is the branch
      * name and the value is its parent branch name.
      *
      * Cached entries that are still within the TTL are reused. Stale or missing entries are
-     * fetched from [gitLayer] in a single pass. The [state] flow is updated with the full
-     * result before returning.
+     * fetched from [gitLayer] in a single pass.
      *
      * @param branches Map of branch → parent branch.
      * @return Map of branch → [AheadBehind] for every entry in [branches].
@@ -44,19 +43,22 @@ class AheadBehindCalculator(
         val result = mutableMapOf<String, AheadBehind>()
 
         for ((branch, parent) in branches) {
-            val cached = cache[branch]
-            if (cached != null && now - cached.timestampMs < ttlMs) {
-                result[branch] = cached.value
-            } else {
-                // Fetch and cache the fresh value.
-                val fresh = gitLayer.aheadBehind(branch, parent)
-                cache[branch] = CachedEntry(fresh, now)
-                result[branch] = fresh
+            val ab = synchronized(cache) {
+                val cached = cache[branch]
+                if (cached != null && now - cached.timestampMs < ttlMs) {
+                    cached.value
+                } else {
+                    // Fetch and cache the fresh value inside the lock so concurrent callers
+                    // for the same branch do not each issue a redundant git invocation.
+                    val fresh = gitLayer.aheadBehind(branch, parent)
+                    cache[branch] = CachedEntry(fresh, now)
+                    fresh
+                }
             }
+            result[branch] = ab
         }
 
-        _state.value = result.toMap()
-        return result.toMap()
+        return result
     }
 
     /**

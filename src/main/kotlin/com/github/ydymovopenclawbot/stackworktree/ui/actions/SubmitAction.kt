@@ -19,6 +19,7 @@ class SubmitAction : AnAction(
 
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabled = false
+        e.presentation.text = "Submit (coming soon)"
         e.presentation.description = "Coming soon: submit stack branches for code review"
     }
 
