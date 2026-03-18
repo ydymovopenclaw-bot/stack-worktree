@@ -1,29 +1,51 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.actions
 
+import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
+import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.Task
 
 /**
- * Rebases all stack branches onto the latest mainline (disabled — coming in a future sprint).
+ * Toolbar action: **Restack All**.
  *
- * The tooltip is set on every [update] call so it remains visible even in the disabled state.
+ * Rebases every tracked branch bottom-to-top (BFS order from trunk) onto its parent via
+ * [OpsLayer.restackAll]. Each branch is processed with `git rebase --onto <parent>
+ * <oldParentTip> <branch>` so only commits unique to the branch are replayed.
+ *
+ * Conflicts at any branch open IntelliJ's three-pane merge dialog. Resolving and continuing
+ * lets the cascade proceed; aborting stops the cascade and leaves already-rebased branches
+ * in their new state (no rollback).
+ *
+ * Progress is shown as a determinate progress bar: "Restacking branch 2/4: feature-auth".
  */
 class RestackAction : AnAction(
     "Restack",
-    "Coming soon: rebase all stacks onto the latest main",
+    "Rebase all stacks bottom-to-top onto their parents",
     AllIcons.General.Reset,
 ) {
-    override fun actionPerformed(e: AnActionEvent) = Unit
-
-    override fun update(e: AnActionEvent) {
-        e.presentation.isEnabled = false
-        // Set text (shown in the floating toolbar tooltip) AND description (shown in the
-        // IDE status bar) so the "coming soon" message is visible in both places.
-        e.presentation.text = "Restack (coming soon)"
-        e.presentation.description = "Coming soon: rebase all stacks onto the latest main"
-    }
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
+
+    override fun update(e: AnActionEvent) {
+        e.presentation.isEnabled = e.project != null
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+
+        object : Task.Backgroundable(project, "Restacking all branches\u2026", /* canBeCancelled */ true) {
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = false
+                val ops: OpsLayer = OpsLayerImpl.forProject(project)
+                ops.restackAll { current, total, branchName ->
+                    indicator.text     = "Restacking branch $current/$total: $branchName"
+                    indicator.fraction = current.toDouble() / total
+                }
+            }
+        }.queue()
+    }
 }

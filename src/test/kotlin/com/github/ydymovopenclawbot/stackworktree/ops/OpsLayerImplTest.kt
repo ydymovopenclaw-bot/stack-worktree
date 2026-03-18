@@ -14,6 +14,7 @@ import com.github.ydymovopenclawbot.stackworktree.state.TrackedBranchNode
 import com.github.ydymovopenclawbot.stackworktree.ui.UiLayer
 import com.intellij.openapi.project.Project
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -607,5 +608,197 @@ class OpsLayerImplTest {
         // "main" and "fix" nodes must be untouched
         assertEquals(chainState().branches["main"], saved.branches["main"])
         assertEquals(chainState().branches["fix"],  saved.branches["fix"])
+    }
+
+    // ── restackAll ────────────────────────────────────────────────────────────
+
+    private fun fourBranchChainState() = StackState(
+        repoConfig = RepoConfig(trunk = "main", remote = "origin"),
+        branches = mapOf(
+            "main" to BranchNode("main", parent = null, children = listOf("auth")),
+            "auth" to BranchNode("auth", parent = "main", children = listOf("api")),
+            "api"  to BranchNode("api",  parent = "auth", children = listOf("ui")),
+            "ui"   to BranchNode("ui",   parent = "api"),
+        ),
+    )
+
+    private fun multiStackState() = StackState(
+        repoConfig = RepoConfig(trunk = "main", remote = "origin"),
+        branches = mapOf(
+            "main"    to BranchNode("main",    parent = null, children = listOf("stack-a", "stack-b")),
+            "stack-a" to BranchNode("stack-a", parent = "main", children = listOf("a-child")),
+            "a-child" to BranchNode("a-child", parent = "stack-a"),
+            "stack-b" to BranchNode("stack-b", parent = "main"),
+        ),
+    )
+
+    @Test
+    fun `restackAll - null state returns Success(0) with no rebase calls`() {
+        val git   = FakeGitLayer()
+        val store = FakeStateStore(null)
+        val result = makeOps(git, store).restackAll()
+
+        assertEquals(RestackResult.Success(0), result)
+        assertTrue(git.rebaseCalls.isEmpty())
+        assertTrue(store.writeHistory.isEmpty())
+    }
+
+    @Test
+    fun `restackAll - trunk-only state returns Success(0) with no rebase calls`() {
+        val state = StackState(
+            repoConfig = RepoConfig(trunk = "main", remote = "origin"),
+            branches   = mapOf("main" to BranchNode("main", parent = null)),
+        )
+        val git   = FakeGitLayer(branchShas = mutableMapOf("main" to "sha-main"))
+        val result = makeOps(git, FakeStateStore(state)).restackAll()
+
+        assertEquals(RestackResult.Success(0), result)
+        assertTrue(git.rebaseCalls.isEmpty())
+    }
+
+    @Test
+    fun `restackAll - single branch is rebased onto trunk`() {
+        val git   = FakeGitLayer(branchShas = mutableMapOf("main" to "sha-main", "feat" to "sha-feat"))
+        val store = FakeStateStore(linearState())
+        val result = makeOps(git, store).restackAll()
+
+        assertEquals(RestackResult.Success(1), result)
+        assertEquals(1, git.rebaseCalls.size)
+        val (branch, newBase, upstream) = git.rebaseCalls.single()
+        assertEquals("feat",     branch)
+        assertEquals("main",     newBase)
+        assertEquals("sha-main", upstream)
+        assertEquals(1, store.writeHistory.size)
+    }
+
+    @Test
+    fun `restackAll - chain rebased in BFS order using pre-rebase parent tip as upstream`() {
+        val git = FakeGitLayer(
+            branchShas = mutableMapOf(
+                "main" to "sha-main",
+                "feat" to "sha-feat-before",
+                "fix"  to "sha-fix-before",
+            ),
+        )
+        val result = makeOps(git, FakeStateStore(chainState())).restackAll()
+
+        assertEquals(RestackResult.Success(2), result)
+        assertEquals(Triple("feat", "main", "sha-main"),        git.rebaseCalls[0])
+        // upstream for fix must be the PRE-rebase tip of feat, not the post-rebase value
+        assertEquals(Triple("fix",  "feat", "sha-feat-before"), git.rebaseCalls[1])
+    }
+
+    @Test
+    fun `restackAll - 4-branch stack restacks all 3 non-trunk branches in order`() {
+        val git = FakeGitLayer(
+            branchShas = mutableMapOf(
+                "main" to "sha-main",
+                "auth" to "sha-auth",
+                "api"  to "sha-api",
+                "ui"   to "sha-ui",
+            ),
+        )
+        val store  = FakeStateStore(fourBranchChainState())
+        val result = makeOps(git, store).restackAll()
+
+        assertEquals(RestackResult.Success(3), result)
+        assertEquals(listOf("auth", "api", "ui"), git.rebaseCalls.map { it.first })
+        assertEquals(1, store.writeHistory.size)
+    }
+
+    @Test
+    fun `restackAll - baseCommit updated to parent tip after successful rebase`() {
+        val mainTip = "sha-main-tip"
+        val git     = FakeGitLayer(branchShas = mutableMapOf("main" to mainTip, "feat" to "sha-feat"))
+        val store   = FakeStateStore(linearState())
+        makeOps(git, store).restackAll()
+
+        val saved = store.writeHistory.single()
+        // After rebasing feat onto main, baseCommit should reflect main's current tip.
+        assertEquals(mainTip, saved.branches["feat"]!!.baseCommit)
+    }
+
+    @Test
+    fun `restackAll - abort keeps already-rebased branches without rollback`() {
+        val oldFeatTip = "sha-feat-before"
+        val git = FakeGitLayer(
+            branchShas = mutableMapOf(
+                "main" to "sha-main",
+                "feat" to oldFeatTip,
+                "fix"  to "sha-fix",
+            ),
+            rebaseResultProvider = { branch, _, _ ->
+                if (branch == "fix") RebaseResult.Aborted("conflict in fix") else RebaseResult.Success
+            },
+        )
+        val store  = FakeStateStore(chainState())
+        val result = makeOps(git, store).restackAll()
+
+        // Returns Aborted with correct counts
+        assertTrue(result is RestackResult.Aborted)
+        val aborted = result as RestackResult.Aborted
+        assertEquals(1,     aborted.rebasedCount)
+        assertEquals("fix", aborted.failedBranch)
+
+        // No rollback — feat must NOT have been reset
+        assertTrue(git.resetCalls.isEmpty(), "No resetBranch calls expected; got ${git.resetCalls}")
+
+        // Partial progress must be persisted
+        assertEquals(1, store.writeHistory.size, "State must be written even on abort")
+        // feat's baseCommit should be set (it was successfully rebased)
+        assertNotNull(store.writeHistory.single().branches["feat"]!!.baseCommit)
+    }
+
+    @Test
+    fun `restackAll - abort on very first branch still writes state`() {
+        val git = FakeGitLayer(
+            branchShas = mutableMapOf("main" to "sha-main", "feat" to "sha-feat"),
+            rebaseResultProvider = { _, _, _ -> RebaseResult.Aborted("immediate conflict") },
+        )
+        val store  = FakeStateStore(linearState())
+        val result = makeOps(git, store).restackAll()
+
+        assertTrue(result is RestackResult.Aborted)
+        assertEquals(0,      (result as RestackResult.Aborted).rebasedCount)
+        assertEquals("feat", result.failedBranch)
+        assertEquals(1, store.writeHistory.size, "State must be written even on first-branch abort")
+    }
+
+    @Test
+    fun `restackAll - progress callback receives correct 1-based indices and branch names`() {
+        val git = FakeGitLayer(
+            branchShas = mutableMapOf(
+                "main" to "sha-main",
+                "feat" to "sha-feat",
+                "fix"  to "sha-fix",
+            ),
+        )
+        val progressCalls = mutableListOf<Triple<Int, Int, String>>()
+        makeOps(git, FakeStateStore(chainState())).restackAll { current, total, name ->
+            progressCalls += Triple(current, total, name)
+        }
+
+        assertEquals(
+            listOf(Triple(1, 2, "feat"), Triple(2, 2, "fix")),
+            progressCalls,
+        )
+    }
+
+    @Test
+    fun `restackAll - multiple stacks under trunk are all rebased`() {
+        val git = FakeGitLayer(
+            branchShas = mutableMapOf(
+                "main"    to "sha-main",
+                "stack-a" to "sha-stack-a",
+                "a-child" to "sha-a-child",
+                "stack-b" to "sha-stack-b",
+            ),
+        )
+        val store  = FakeStateStore(multiStackState())
+        val result = makeOps(git, store).restackAll()
+
+        assertEquals(RestackResult.Success(3), result)
+        val rebased = git.rebaseCalls.map { it.first }.toSet()
+        assertEquals(setOf("stack-a", "a-child", "stack-b"), rebased)
     }
 }
