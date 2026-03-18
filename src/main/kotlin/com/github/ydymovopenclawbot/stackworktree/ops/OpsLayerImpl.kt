@@ -250,6 +250,62 @@ class OpsLayerImpl(
         }
     }
 
+    override fun restackAll(
+        onProgress: ((current: Int, total: Int, branchName: String) -> Unit)?,
+    ): RestackResult {
+        val git   = gitLayer()
+        val store = stateStore()
+        val state = store.read() ?: return RestackResult.Success(0)
+        val trunk = state.repoConfig.trunk
+
+        val bfsOrder = collectBfsOrder(state)
+        if (bfsOrder.isEmpty()) return RestackResult.Success(0)
+
+        val total    = bfsOrder.size
+        val oldTips  = mutableMapOf<String, String>()
+        oldTips[trunk] = git.resolveCommit(trunk)
+
+        val updatedBranches = state.branches.toMutableMap()
+        var rebasedCount    = 0
+
+        for ((i, branch) in bfsOrder.withIndex()) {
+            onProgress?.invoke(i + 1, total, branch)
+
+            val parentName  = state.branches[branch]?.parent ?: run {
+                LOG.warn("restackAll: '$branch' has no parent in state — skipping")
+                continue
+            }
+            val oldParentTip = oldTips[parentName] ?: git.resolveCommit(parentName)
+            // Record pre-rebase tip so descendants can use it as upstream.
+            oldTips[branch] = git.resolveCommit(branch)
+
+            LOG.info("restackAll: rebasing '$branch' --onto '$parentName' (upstream=$oldParentTip) [${i + 1}/$total]")
+            when (val r = git.rebaseOnto(branch, parentName, oldParentTip)) {
+                is RebaseResult.Success -> {
+                    rebasedCount++
+                    val existingNode = updatedBranches[branch] ?: run {
+                        LOG.warn("restackAll: '$branch' missing from branches map after rebase — skipping update")
+                        continue
+                    }
+                    updatedBranches[branch] = existingNode.copy(baseCommit = git.resolveCommit(parentName))
+                }
+                is RebaseResult.Aborted -> {
+                    LOG.warn("restackAll: aborted at '$branch' [${i + 1}/$total]. Reason: ${r.reason}")
+                    // Persist partial progress — no rollback per acceptance criteria.
+                    store.write(state.copy(branches = updatedBranches))
+                    uiLayer().refresh()
+                    return RestackResult.Aborted(rebasedCount, branch, r.reason)
+                }
+            }
+        }
+
+        store.write(state.copy(branches = updatedBranches))
+        uiLayer().refresh()
+        uiLayer().notify("Restacked $rebasedCount branch${if (rebasedCount == 1) "" else "es"} successfully")
+        LOG.info("restackAll: done — rebased $rebasedCount/$total branches")
+        return RestackResult.Success(rebasedCount)
+    }
+
     private fun notifyStateChanged() {
         project.messageBus.syncPublisher(STACK_STATE_TOPIC).stateChanged()
     }
@@ -339,6 +395,22 @@ class OpsLayerImpl(
     }
 
     // ── Rebase helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Returns all non-trunk branches in BFS (parent-before-child) order, suitable for
+     * driving the cascade in [restackAll].
+     */
+    private fun collectBfsOrder(state: StackState): List<String> {
+        val trunk  = state.repoConfig.trunk
+        val result = mutableListOf<String>()
+        val queue  = ArrayDeque(state.branches[trunk]?.children ?: emptyList())
+        while (queue.isNotEmpty()) {
+            val branch = queue.removeFirst()
+            result.add(branch)
+            queue.addAll(state.branches[branch]?.children ?: emptyList())
+        }
+        return result
+    }
 
     private fun rebaseDescendants(
         git: GitLayer,

@@ -123,4 +123,49 @@ interface OpsLayer {
      * @throws IllegalStateException if [branch] is not tracked or has no parent.
      */
     fun rebaseOntoParent(branch: String)
+
+    /**
+     * Rebases every tracked branch onto its parent in bottom-to-top (BFS) order, cascading
+     * from trunk through all stacks.
+     *
+     * Each branch is rebased via `git rebase --onto <parent> <oldParentTip> <branch>` so
+     * that only commits unique to the branch are replayed. The old parent tip is recorded
+     * just before the parent itself is rebased, which is the same proven pattern used by the
+     * existing internal `rebaseDescendants` helper.
+     *
+     * Conflict handling is delegated to [git4idea.rebase.GitRebaser], which opens
+     * IntelliJ's three-pane merge dialog automatically. The cascade pauses until the user
+     * resolves conflicts and continues, or aborts.
+     *
+     * **Abort semantics differ from [insertBranchAbove]/[insertBranchBelow]**: already-rebased
+     * branches are **not** rolled back. The partial progress is persisted so the user can
+     * continue manually from where the cascade stopped.
+     *
+     * Progress is reported via the optional [onProgress] callback with 1-based [current],
+     * [total] branch count, and the [branchName] currently being rebased — suitable for
+     * forwarding to [com.intellij.openapi.progress.ProgressIndicator].
+     *
+     * @return [RestackResult.Success] when all branches were rebased, or
+     *   [RestackResult.Aborted] (with the count of already-rebased branches) when the user
+     *   aborted at a conflict.
+     */
+    fun restackAll(
+        onProgress: ((current: Int, total: Int, branchName: String) -> Unit)? = null,
+    ): RestackResult
+}
+
+/** Result of a [OpsLayer.restackAll] operation. */
+sealed class RestackResult {
+    /** All branches were successfully rebased. */
+    data class Success(val rebasedCount: Int) : RestackResult()
+
+    /**
+     * Cascade was aborted at [failedBranch]; [rebasedCount] branches completed before
+     * the abort. Already-rebased branches are kept in their new state.
+     */
+    data class Aborted(
+        val rebasedCount: Int,
+        val failedBranch: String,
+        val reason: String,
+    ) : RestackResult()
 }
