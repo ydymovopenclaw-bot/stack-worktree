@@ -6,6 +6,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>Git4Idea</depends>
+    <depends>org.jetbrains.plugins.github</depends>
     <!--
       Terminal plugin: optional — the OpenInTerminalAction is loaded only when this
       plugin is present (registered in terminal-support.xml).  IDEA ships with the
@@ -69,6 +70,14 @@
         <notificationGroup id="StackTree" displayType="BALLOON" key="stacktree.notification.group"/>
         <notificationGroup id="StackWorktree" displayType="BALLOON"/>
         <notificationGroup id="Stack Worktree Notifications" displayType="BALLOON"/>
+
+        <!-- PR layer project services (S6.1) -->
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.pr.PrProvider"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.pr.github.GitHubProvider"/>
+        <projectService
+            serviceInterface="com.github.ydymovopenclawbot.stackworktree.pr.PrLayer"
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.pr.DefaultPrLayer"/>
 
         <!-- State / Git / Ops / UI layer project services (S3.3) -->
         <projectService
