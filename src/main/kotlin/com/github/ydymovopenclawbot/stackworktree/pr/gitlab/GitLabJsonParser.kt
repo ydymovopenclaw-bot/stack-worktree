@@ -88,7 +88,9 @@ object GitLabJsonParser {
                 "running", "pending", "created",
                 "waiting_for_resource", "preparing", "scheduled" -> anyPending = true
 
-                "failed", "canceled" -> anyFailing = true
+                // GitLab's API uses British spelling ("cancelled"); "canceled" is kept for
+                // defensive compatibility in case the spelling ever changes.
+                "failed", "cancelled", "canceled" -> anyFailing = true
             }
         }
 

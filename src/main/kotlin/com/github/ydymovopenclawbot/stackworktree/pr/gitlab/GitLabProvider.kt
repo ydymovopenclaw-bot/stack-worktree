@@ -8,12 +8,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * [PrProvider] implementation backed by the GitLab REST API v4.
@@ -36,70 +30,41 @@ class GitLabProvider(
     private val tokenStore: GitLabTokenStore,
 ) : PrProvider {
 
-    // Shared OkHttpClient — reuse across calls for connection pooling.
-    private val client: OkHttpClient = OkHttpClient()
-
     // ── PrProvider ────────────────────────────────────────────────────────────
 
     override fun createPr(branch: String, base: String, title: String, body: String): PrInfo {
         LOG.info("GitLabProvider: createPr source='$branch' target='$base'")
-        val token = resolveToken()
-        val payload = buildJsonPayload(
-            "source_branch" to branch,
-            "target_branch" to base,
-            "title" to title,
-            "description" to body,
-        )
-        val url = "${repoInfo.apiBaseUrl}/api/v4/projects/${repoInfo.encodedNamespace}/merge_requests"
-        return execute(postRequest(url, payload, token)) { GitLabJsonParser.parseMrInfo(it) }
+        return http().createPr(branch, base, title, body)
     }
 
     override fun updatePr(prId: Int, title: String?, body: String?, base: String?): PrInfo {
         LOG.info("GitLabProvider: updatePr #$prId title=$title base=$base")
-        val token = resolveToken()
-        val fields = buildList<Pair<String, String>> {
-            title?.let { add("title" to it) }
-            body?.let { add("description" to it) }
-            base?.let { add("target_branch" to it) }
-        }
-        val payload = buildJsonPayload(*fields.toTypedArray())
-        val url = "${repoInfo.apiBaseUrl}/api/v4/projects/${repoInfo.encodedNamespace}/merge_requests/$prId"
-        return execute(putRequest(url, payload, token)) { GitLabJsonParser.parseMrInfo(it) }
+        return http().updatePr(prId, title, body, base)
     }
 
     override fun getPrStatus(prId: Int): PrStatus {
         LOG.info("GitLabProvider: getPrStatus #$prId")
-        val token = resolveToken()
-        val base = "${repoInfo.apiBaseUrl}/api/v4/projects/${repoInfo.encodedNamespace}"
-
-        val mrJson = execute(getRequest("$base/merge_requests/$prId", token)) { it }
-        val pipelinesJson = execute(getRequest("$base/merge_requests/$prId/pipelines", token)) { it }
-        val approvalsJson = execute(getRequest("$base/merge_requests/$prId/approvals", token)) { it }
-
-        return GitLabJsonParser.parsePrStatus(mrJson, pipelinesJson, approvalsJson)
+        return http().getPrStatus(prId)
     }
 
     override fun closePr(prId: Int) {
         LOG.info("GitLabProvider: closePr #$prId")
-        val token = resolveToken()
-        // GitLab closes an MR by sending state_event=close via a PUT update
-        val payload = buildJsonPayload("state_event" to "close")
-        val url = "${repoInfo.apiBaseUrl}/api/v4/projects/${repoInfo.encodedNamespace}/merge_requests/$prId"
-        execute(putRequest(url, payload, token)) { /* response body not needed */ }
+        http().closePr(prId)
     }
 
     override fun findPrByBranch(branch: String): PrInfo? {
-        val token = resolveToken()
-        // Branch names can contain '/' (e.g. "feature/foo"). The GitLab API treats the
-        // query string value as a literal path segment when routing, so slashes must be
-        // percent-encoded to avoid a 404 or wrong-repo match.
-        val encodedBranch = branch.replace("/", "%2F")
-        val url = "${repoInfo.apiBaseUrl}/api/v4/projects/${repoInfo.encodedNamespace}/merge_requests" +
-            "?source_branch=$encodedBranch&state=opened&per_page=1"
-        LOG.info("GitLabProvider: findPrByBranch '$branch' → GET $url")
-        val list = execute(getRequest(url, token)) { GitLabJsonParser.parseMrList(it) }
-        return list.firstOrNull()
+        LOG.info("GitLabProvider: findPrByBranch '$branch'")
+        return http().findPrByBranch(branch)
     }
+
+    // ── HTTP client construction ───────────────────────────────────────────────
+
+    /**
+     * Constructs a [GitLabHttpClient] using the resolved PAT and the shared [OkHttpClient]
+     * singleton.  Token resolution may prompt the user on the first call if no PAT is stored.
+     */
+    private fun http(): GitLabHttpClient =
+        GitLabHttpClient(repoInfo, resolveToken())
 
     // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -135,63 +100,7 @@ class GitLabProvider(
         return pat
     }
 
-    // ── HTTP helpers ──────────────────────────────────────────────────────────
-
-    private fun getRequest(url: String, token: String): Request =
-        Request.Builder()
-            .url(url)
-            .header("PRIVATE-TOKEN", token)
-            .build()
-
-    private fun postRequest(url: String, body: String, token: String): Request =
-        Request.Builder()
-            .url(url)
-            .header("PRIVATE-TOKEN", token)
-            .post(body.toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-
-    private fun putRequest(url: String, body: String, token: String): Request =
-        Request.Builder()
-            .url(url)
-            .header("PRIVATE-TOKEN", token)
-            .put(body.toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-
-    /**
-     * Executes [request], asserts a successful (2xx) response, reads the body, and applies
-     * [transform] to produce the result.
-     *
-     * @throws PrProviderException for non-2xx responses or I/O errors.
-     */
-    private fun <T> execute(request: Request, transform: (String) -> T): T {
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val errorBody = response.body?.string() ?: "(empty body)"
-                    throw PrProviderException(
-                        "GitLab API error ${response.code} for ${request.url}: $errorBody"
-                    )
-                }
-                return transform(response.body?.string() ?: "")
-            }
-        } catch (e: PrProviderException) {
-            throw e
-        } catch (e: Exception) {
-            throw PrProviderException("Network error calling GitLab API: ${e.message}", e)
-        }
-    }
-
-    // ── JSON helpers ──────────────────────────────────────────────────────────
-
-    /**
-     * Builds a flat JSON object from the given key-value pairs using
-     * [buildJsonObject] to ensure correct escaping of all characters.
-     */
-    private fun buildJsonPayload(vararg entries: Pair<String, String>): String =
-        buildJsonObject { entries.forEach { (k, v) -> put(k, v) } }.toString()
-
     private companion object {
         private val LOG = Logger.getInstance(GitLabProvider::class.java)
-        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

@@ -23,22 +23,27 @@ import com.intellij.openapi.project.Project
  * 3. Otherwise — a [PrProviderException] is thrown.
  *
  * The detected provider is cached after the first successful resolution so subsequent
- * calls pay no detection cost.
- *
- * @param gitLabHostOverride  When non-null, forces GitLab detection for a self-hosted
- *   instance whose domain name does not contain the word "gitlab".
- *
- *   **Note**: The IntelliJ service container always passes only [Project] when constructing
- *   this service, so [gitLabHostOverride] is always `null` at runtime.  It exists solely for
- *   programmatic construction in tests.
- *   TODO(S6.x): wire this from a persisted settings object (e.g. PropertiesComponent) once
- *   a configuration UI for self-hosted GitLab instances is available.
+ * calls pay no detection cost.  To force re-detection (e.g. after changing a remote URL),
+ * construct a fresh instance.
  */
 @Service(Service.Level.PROJECT)
 class AutodetectPrProvider(
     private val project: Project,
-    private val gitLabHostOverride: String? = null,
 ) : PrProvider {
+
+    /**
+     * When non-null, forces GitLab detection for a self-hosted instance whose domain name
+     * does not contain the word "gitlab".
+     *
+     * The IntelliJ service container constructs this class with the single `(Project)`
+     * constructor, so this field is always `null` in production.  It exists solely for
+     * programmatic construction in tests where a self-hosted GitLab domain must be simulated.
+     *
+     * TODO(S6.x): wire this from a persisted settings object (e.g. PropertiesComponent) once
+     * a configuration UI for self-hosted GitLab instances is available.
+     */
+    @JvmField
+    var gitLabHostOverride: String? = null
 
     private val delegate: PrProvider by lazy { resolveProvider() }
 

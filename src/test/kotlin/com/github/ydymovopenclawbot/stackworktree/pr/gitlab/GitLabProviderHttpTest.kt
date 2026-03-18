@@ -1,15 +1,8 @@
 package com.github.ydymovopenclawbot.stackworktree.pr.gitlab
 
-import com.github.ydymovopenclawbot.stackworktree.pr.PrInfo
 import com.github.ydymovopenclawbot.stackworktree.pr.PrProviderException
 import com.github.ydymovopenclawbot.stackworktree.pr.PrState
-import com.github.ydymovopenclawbot.stackworktree.pr.PrStatus
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
@@ -23,29 +16,31 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 /**
- * Integration tests for the [GitLabProvider] HTTP layer, driven by [MockWebServer].
+ * Integration tests for [GitLabHttpClient] (the HTTP layer used by [GitLabProvider]),
+ * driven by [MockWebServer].
  *
- * [GitLabProvider] requires an IntelliJ project service context and cannot be instantiated
- * outside the IDE container.  [TestableGitLabClient] mirrors its HTTP behaviour with injected
- * [GitLabRepoInfo] and token so we can test all endpoints, request shapes, and error handling
- * without a live IDE or real credentials.
+ * [GitLabHttpClient] accepts an injected [OkHttpClient], so it can be constructed with a
+ * MockWebServer base URL without any IntelliJ platform context.  This tests all HTTP
+ * endpoints, request shapes, JSON parsing, and error handling through the same production
+ * code path that [GitLabProvider] uses at runtime.
  */
 class GitLabProviderHttpTest {
 
     private lateinit var server: MockWebServer
-    private lateinit var client: TestableGitLabClient
+    private lateinit var client: GitLabHttpClient
 
     @BeforeEach
     fun setUp() {
         server = MockWebServer()
         server.start()
-        client = TestableGitLabClient(
+        client = GitLabHttpClient(
             repoInfo = GitLabRepoInfo(
                 host = "gitlab.com",
                 namespace = "myorg/myrepo",
                 apiBaseUrl = server.url("").toString().trimEnd('/'),
             ),
             token = "test-token-xyz",
+            httpClient = OkHttpClient(),
         )
     }
 
@@ -105,7 +100,7 @@ class GitLabProviderHttpTest {
     fun `updatePr sends PUT to merge_requests slash iid`() {
         server.enqueue(MockResponse().setResponseCode(200).setBody(mrJson(iid = 7)))
 
-        val result = client.updatePr(prId = 7, title = "Updated title")
+        val result = client.updatePr(prId = 7, title = "Updated title", body = null, base = null)
 
         assertEquals(7, result.number)
         val req = server.takeRequest()
@@ -121,7 +116,7 @@ class GitLabProviderHttpTest {
     fun `updatePr maps body parameter to description field`() {
         server.enqueue(MockResponse().setResponseCode(200).setBody(mrJson(iid = 3)))
 
-        client.updatePr(prId = 3, body = "new description")
+        client.updatePr(prId = 3, title = null, body = "new description", base = null)
 
         val reqBody = server.takeRequest().body.readUtf8()
         assertTrue(reqBody.contains("\"description\""), "body missing 'description' key: $reqBody")
@@ -132,7 +127,7 @@ class GitLabProviderHttpTest {
     fun `updatePr maps base parameter to target_branch field`() {
         server.enqueue(MockResponse().setResponseCode(200).setBody(mrJson(iid = 4)))
 
-        client.updatePr(prId = 4, base = "release")
+        client.updatePr(prId = 4, title = null, body = null, base = "release")
 
         val reqBody = server.takeRequest().body.readUtf8()
         assertTrue(reqBody.contains("\"target_branch\""), "body missing 'target_branch': $reqBody")
@@ -209,6 +204,19 @@ class GitLabProviderHttpTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
 
         assertNull(client.findPrByBranch("no-such-branch"))
+    }
+
+    @Test
+    fun `findPrByBranch percent-encodes plus sign in branch name`() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
+
+        client.findPrByBranch("feature+fix")
+
+        val req = server.takeRequest()
+        assertTrue(
+            req.path!!.contains("feature%2Bfix"),
+            "Plus sign must be encoded as %2B, not left as '+' (which means space): ${req.path}",
+        )
     }
 
     // ── namespace encoding ────────────────────────────────────────────────────
@@ -307,114 +315,4 @@ class GitLabProviderHttpTest {
 
     private fun approvalsJson(approved: Boolean, approvalsRequired: Int = 1) =
         """{"approved":$approved,"approvals_required":$approvalsRequired,"approvals_left":${if (approved) 0 else approvalsRequired}}"""
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test harness — mirrors GitLabProvider HTTP logic with injected dependencies
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Thin wrapper around the same HTTP mechanics used by [GitLabProvider], with
- * [GitLabRepoInfo] and the auth token injected instead of resolved from the IDE.
- * This lets us write full end-to-end HTTP tests without an IntelliJ container.
- *
- * **IMPORTANT — keep in sync with [GitLabProvider]**: This class intentionally duplicates
- * the HTTP logic from [GitLabProvider] rather than testing [GitLabProvider] directly,
- * because [GitLabProvider] requires the IntelliJ project service container to resolve its
- * token via [GitLabTokenStore].  Any change to a URL path, query-parameter encoding, HTTP
- * verb, header, or JSON body field in [GitLabProvider] **must** be reflected here, and vice
- * versa, or the test suite will diverge silently from production behaviour.
- *
- * In particular, note that [findPrByBranch] must URL-encode branch names (replacing '/'
- * with '%2F') to match the production implementation — the test at
- * `findPrByBranch returns first MR when list is non-empty` asserts this explicitly.
- */
-private class TestableGitLabClient(
-    private val repoInfo: GitLabRepoInfo,
-    private val token: String,
-) {
-    private val httpClient = OkHttpClient()
-    private val jsonMime = "application/json; charset=utf-8".toMediaType()
-
-    private val base get() = "${repoInfo.apiBaseUrl}/api/v4/projects/${repoInfo.encodedNamespace}"
-
-    fun createPr(branch: String, base: String, title: String, body: String): PrInfo {
-        val payload = jsonOf(
-            "source_branch" to branch,
-            "target_branch" to base,
-            "title" to title,
-            "description" to body,
-        )
-        return execute(postReq("${this.base}/merge_requests", payload)) { GitLabJsonParser.parseMrInfo(it) }
-    }
-
-    fun updatePr(prId: Int, title: String? = null, body: String? = null, base: String? = null): PrInfo {
-        val fields = buildList<Pair<String, String>> {
-            title?.let { add("title" to it) }
-            body?.let { add("description" to it) }
-            base?.let { add("target_branch" to it) }
-        }
-        return execute(putReq("${this.base}/merge_requests/$prId", jsonOf(*fields.toTypedArray()))) {
-            GitLabJsonParser.parseMrInfo(it)
-        }
-    }
-
-    fun getPrStatus(prId: Int): PrStatus {
-        val mrJson = execute(getReq("$base/merge_requests/$prId")) { it }
-        val pipelinesJson = execute(getReq("$base/merge_requests/$prId/pipelines")) { it }
-        val approvalsJson = execute(getReq("$base/merge_requests/$prId/approvals")) { it }
-        return GitLabJsonParser.parsePrStatus(mrJson, pipelinesJson, approvalsJson)
-    }
-
-    fun closePr(prId: Int) {
-        execute(putReq("$base/merge_requests/$prId", jsonOf("state_event" to "close"))) {}
-    }
-
-    fun findPrByBranch(branch: String): PrInfo? {
-        val encodedBranch = branch.replace("/", "%2F")
-        val url = "$base/merge_requests?source_branch=$encodedBranch&state=opened&per_page=1"
-        return execute(getReq(url)) { GitLabJsonParser.parseMrList(it).firstOrNull() }
-    }
-
-    // ── request builders ──────────────────────────────────────────────────────
-
-    private fun getReq(url: String) = Request.Builder()
-        .url(url)
-        .header("PRIVATE-TOKEN", token)
-        .build()
-
-    private fun postReq(url: String, body: String) = Request.Builder()
-        .url(url)
-        .header("PRIVATE-TOKEN", token)
-        .post(body.toRequestBody(jsonMime))
-        .build()
-
-    private fun putReq(url: String, body: String) = Request.Builder()
-        .url(url)
-        .header("PRIVATE-TOKEN", token)
-        .put(body.toRequestBody(jsonMime))
-        .build()
-
-    // ── execute ───────────────────────────────────────────────────────────────
-
-    private fun <T> execute(req: Request, transform: (String) -> T): T {
-        httpClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                val errorBody = resp.body?.string() ?: ""
-                throw com.github.ydymovopenclawbot.stackworktree.pr.PrProviderException(
-                    "HTTP ${resp.code} for ${req.url}: $errorBody"
-                )
-            }
-            return transform(resp.body?.string() ?: "")
-        }
-    }
-
-    // ── JSON helper ───────────────────────────────────────────────────────────
-
-    /**
-     * Builds a JSON object using [buildJsonObject] so that control characters are
-     * correctly escaped.
-     */
-    private fun jsonOf(vararg pairs: Pair<String, String>): String =
-        buildJsonObject { pairs.forEach { (k, v) -> put(k, v) } }.toString()
 }
