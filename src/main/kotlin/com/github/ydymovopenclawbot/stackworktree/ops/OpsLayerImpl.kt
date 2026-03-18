@@ -222,7 +222,15 @@ class OpsLayerImpl(
 
         LOG.info("rebaseOntoParent: rebasing '$branch' onto '$parent'")
 
-        when (val result = git.rebaseOnto(branch, parent, parent)) {
+        val result = try {
+            git.rebaseOnto(branch, parent, parent)
+        } catch (e: Exception) {
+            LOG.warn("rebaseOntoParent: git rebase of '$branch' onto '$parent' failed: ${e.message}", e)
+            ui.notify("Rebase of '$branch' onto '$parent' failed: ${e.message}")
+            return
+        }
+
+        when (result) {
             is RebaseResult.Success -> {
                 // After a clean rebase onto parent, merge-base = tip of parent.
                 val newBaseCommit = git.resolveCommit(parent)
