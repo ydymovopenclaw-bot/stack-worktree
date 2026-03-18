@@ -78,6 +78,24 @@ interface GitLayer {
     fun rebaseOnto(branch: String, newBase: String, upstream: String): RebaseResult
 
     /**
+     * Fetches the given [remote] (`git fetch <remote>`).
+     *
+     * @throws WorktreeCommandException if the fetch fails (e.g. no network, unknown remote).
+     */
+    fun fetchRemote(remote: String)
+
+    /**
+     * Returns the set of branch names (remote-prefix stripped) that have been merged into
+     * `<remote>/<trunkBranch>` on the remote.
+     *
+     * Runs `git branch -r --merged <remote>/<trunkBranch>`, strips the `<remote>/` prefix
+     * from each line, and excludes [trunkBranch] itself.
+     *
+     * @throws WorktreeCommandException if the git command fails.
+     */
+    fun getMergedRemoteBranches(remote: String, trunkBranch: String): Set<String>
+
+    /**
      * Creates a new local branch from the current HEAD (`git checkout -b <branch>`).
      *
      * @throws BranchOperationException if the branch already exists or the command fails.

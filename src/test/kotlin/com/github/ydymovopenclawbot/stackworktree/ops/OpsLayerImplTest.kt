@@ -10,6 +10,7 @@ import com.github.ydymovopenclawbot.stackworktree.state.PluginState
 import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
 import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackStateStore
+import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
 import com.github.ydymovopenclawbot.stackworktree.state.TrackedBranchNode
 import com.github.ydymovopenclawbot.stackworktree.ui.UiLayer
 import com.intellij.openapi.project.Project
@@ -215,19 +216,40 @@ class OpsLayerImplTest {
         val existingBranches: MutableSet<String> = mutableSetOf(),
         val rebaseResultProvider: (branch: String, newBase: String, upstream: String) -> RebaseResult =
             { _, _, _ -> RebaseResult.Success },
+        /** Provider for [fetchRemote]; throw here to simulate a network failure. */
+        val onFetch: (remote: String) -> Unit = { _ -> },
+        /** Provider for [getMergedRemoteBranches]. */
+        val mergedBranchesProvider: (remote: String, trunk: String) -> Set<String> =
+            { _, _ -> emptySet() },
+        /** Provider for [worktreeList]; defaults to empty so syncAll tests don't crash. */
+        val worktreeListProvider: () -> List<Worktree> = { emptyList() },
+        /** Provider for [aheadBehind]; defaults to 0/0 so syncAll tests don't crash. */
+        val aheadBehindProvider: (branch: String, parent: String) -> AheadBehind =
+            { _, _ -> AheadBehind(0, 0) },
     ) : GitLayer {
 
-        val createdBranches = mutableListOf<Pair<String, String>>()       // name → base
-        val deletedBranches = mutableListOf<String>()
-        val resetCalls      = mutableListOf<Pair<String, String>>()       // branch → toCommit
-        val rebaseCalls     = mutableListOf<Triple<String, String, String>>() // branch, newBase, upstream
+        val createdBranches  = mutableListOf<Pair<String, String>>()          // name → base
+        val deletedBranches  = mutableListOf<String>()
+        val resetCalls       = mutableListOf<Pair<String, String>>()           // branch → toCommit
+        val rebaseCalls      = mutableListOf<Triple<String, String, String>>() // branch, newBase, upstream
+        val fetchCalls       = mutableListOf<String>()
+        val removedWorktrees = mutableListOf<String>()
 
-        override fun worktreeAdd(path: String, branch: String): Worktree  = unsupported()
-        override fun worktreeRemove(path: String)                          = unsupported()
-        override fun worktreeList(): List<Worktree>                        = unsupported()
-        override fun worktreePrune()                                       = unsupported()
-        override fun aheadBehind(branch: String, parent: String): AheadBehind = unsupported()
-        override fun listLocalBranches(): List<String>                     = emptyList()
+        override fun worktreeAdd(path: String, branch: String): Worktree = unsupported()
+        override fun worktreeRemove(path: String) { removedWorktrees += path }
+        override fun worktreeList(): List<Worktree> = worktreeListProvider()
+        override fun worktreePrune()                = unsupported()
+        override fun aheadBehind(branch: String, parent: String): AheadBehind =
+            aheadBehindProvider(branch, parent)
+        override fun listLocalBranches(): List<String> = emptyList()
+
+        override fun fetchRemote(remote: String) {
+            fetchCalls += remote
+            onFetch(remote)
+        }
+
+        override fun getMergedRemoteBranches(remote: String, trunkBranch: String): Set<String> =
+            mergedBranchesProvider(remote, trunkBranch)
 
         override fun createBranch(branchName: String, baseBranch: String) {
             createdBranches += branchName to baseBranch
@@ -282,6 +304,14 @@ class OpsLayerImplTest {
         override fun notify(message: String) { notifications += message }
     }
 
+    private class FakeStateLayer(initial: PluginState = PluginState()) : StateLayer {
+        var current = initial
+        val saveHistory = mutableListOf<PluginState>()
+
+        override fun load()                  = current
+        override fun save(state: PluginState) { current = state; saveHistory += state }
+    }
+
     private val noProject: Project = Proxy.newProxyInstance(
         Project::class.java.classLoader,
         arrayOf(Project::class.java),
@@ -290,10 +320,11 @@ class OpsLayerImplTest {
     } as Project
 
     private fun makeOps(
-        git:   FakeGitLayer,
-        store: FakeStateStore,
-        ui:    FakeUiLayer = FakeUiLayer(),
-    ) = OpsLayerImpl(noProject, git, store, ui)
+        git:        FakeGitLayer,
+        store:      FakeStateStore,
+        ui:         FakeUiLayer    = FakeUiLayer(),
+        stateLayer: FakeStateLayer = FakeStateLayer(),
+    ) = OpsLayerImpl(noProject, git, store, ui, stateLayer)
 
     private fun linearState() = StackState(
         repoConfig = RepoConfig(trunk = "main", remote = "origin"),
@@ -800,5 +831,255 @@ class OpsLayerImplTest {
         assertEquals(RestackResult.Success(3), result)
         val rebased = git.rebaseCalls.map { it.first }.toSet()
         assertEquals(setOf("stack-a", "a-child", "stack-b"), rebased)
+    }
+
+    // ── syncAll ───────────────────────────────────────────────────────────────
+
+    /** [PluginState] with trunk=main and two tracked branches A → B (B is child of A). */
+    private fun twoNodePluginState() = PluginState(
+        trunkBranch = "main",
+        trackedBranches = mapOf(
+            "A" to TrackedBranchNode(name = "A", parentName = "main", children = listOf("B")),
+            "B" to TrackedBranchNode(name = "B", parentName = "A"),
+        ),
+    )
+
+    @Test
+    fun `syncAll - always fetches the remote`() {
+        val git = FakeGitLayer()
+        makeOps(git, FakeStateStore(null), stateLayer = FakeStateLayer(twoNodePluginState()))
+            .syncAll()
+
+        assertEquals(listOf("origin"), git.fetchCalls)
+    }
+
+    @Test
+    fun `syncAll - uses remote from StackState when available`() {
+        val git   = FakeGitLayer()
+        val store = FakeStateStore(StackState(RepoConfig(trunk = "main", remote = "upstream")))
+        makeOps(git, store, stateLayer = FakeStateLayer(twoNodePluginState())).syncAll()
+
+        assertEquals(listOf("upstream"), git.fetchCalls)
+    }
+
+    @Test
+    fun `syncAll - no merged branches returns empty result with notification`() {
+        val git = FakeGitLayer(mergedBranchesProvider = { _, _ -> emptySet() })
+        val ui  = FakeUiLayer()
+        val result = makeOps(
+            git, FakeStateStore(null), ui,
+            stateLayer = FakeStateLayer(twoNodePluginState()),
+        ).syncAll()
+
+        assertEquals(emptyList<String>(), result.mergedBranches)
+        assertEquals("Synced: 0 merged", ui.notifications.single())
+        assertEquals(1, ui.refreshCount)
+    }
+
+    @Test
+    fun `syncAll - merged branch is removed from PluginState`() {
+        val git = FakeGitLayer(
+            mergedBranchesProvider = { _, _ -> setOf("A") },
+        )
+        val sl = FakeStateLayer(twoNodePluginState())
+        makeOps(git, FakeStateStore(null), stateLayer = sl).syncAll()
+
+        val saved = sl.saveHistory.last()
+        assertTrue("A" !in saved.trackedBranches)
+    }
+
+    @Test
+    fun `syncAll - children of merged branch are re-parented to merged branch's parent`() {
+        // Stack: main → A → B; A is merged. B should be re-parented to main.
+        val git = FakeGitLayer(mergedBranchesProvider = { _, _ -> setOf("A") })
+        val sl  = FakeStateLayer(twoNodePluginState())
+        makeOps(git, FakeStateStore(null), stateLayer = sl).syncAll()
+
+        val saved = sl.saveHistory.last()
+        assertEquals("main", saved.trackedBranches["B"]?.parentName)
+    }
+
+    @Test
+    fun `syncAll - merged branch is also removed from StackState`() {
+        val stackState = StackState(
+            repoConfig = RepoConfig(trunk = "main", remote = "origin"),
+            branches = mapOf(
+                "main" to BranchNode("main", parent = null, children = listOf("A")),
+                "A"    to BranchNode("A",    parent = "main", children = listOf("B")),
+                "B"    to BranchNode("B",    parent = "A"),
+            ),
+        )
+        val git   = FakeGitLayer(mergedBranchesProvider = { _, _ -> setOf("A") })
+        val store = FakeStateStore(stackState)
+        makeOps(git, store).syncAll()
+
+        val saved = store.writeHistory.last()
+        assertTrue("A" !in saved.branches)
+        // B should be re-parented to main in StackState too
+        assertEquals("main", saved.branches["B"]?.parent)
+        // main's children list should skip A and promote B
+        assertEquals(listOf("B"), saved.branches["main"]?.children)
+    }
+
+    @Test
+    fun `syncAll - trunk is never treated as merged even if remote returns it`() {
+        val git = FakeGitLayer(
+            // Remote says "main" is merged — should be ignored
+            mergedBranchesProvider = { _, _ -> setOf("main", "A") },
+        )
+        val sl = FakeStateLayer(twoNodePluginState())
+        val result = makeOps(git, FakeStateStore(null), stateLayer = sl).syncAll()
+
+        assertTrue("main" !in result.mergedBranches)
+        assertTrue("A" in result.mergedBranches)
+    }
+
+    @Test
+    fun `syncAll - worktree for merged branch is pruned when autoPrune=true`() {
+        val worktree = Worktree(path = "/wt/A", branch = "A", head = "abc", isLocked = false)
+        val git = FakeGitLayer(
+            mergedBranchesProvider = { _, _ -> setOf("A") },
+            worktreeListProvider   = { listOf(worktree) },
+        )
+        val result = makeOps(git, FakeStateStore(null), stateLayer = FakeStateLayer(twoNodePluginState()))
+            .syncAll(autoPrune = true)
+
+        assertEquals(listOf("/wt/A"), git.removedWorktrees)
+        assertEquals(listOf("/wt/A"), result.prunedWorktrees)
+    }
+
+    @Test
+    fun `syncAll - worktree is NOT pruned when autoPrune=false`() {
+        val worktree = Worktree(path = "/wt/A", branch = "A", head = "abc", isLocked = false)
+        val git = FakeGitLayer(
+            mergedBranchesProvider = { _, _ -> setOf("A") },
+            worktreeListProvider   = { listOf(worktree) },
+        )
+        val result = makeOps(git, FakeStateStore(null), stateLayer = FakeStateLayer(twoNodePluginState()))
+            .syncAll(autoPrune = false)
+
+        assertTrue(git.removedWorktrees.isEmpty())
+        assertTrue(result.prunedWorktrees.isEmpty())
+    }
+
+    @Test
+    fun `syncAll - main worktree is never pruned`() {
+        val mainWorktree = Worktree(path = "/repo", branch = "A", head = "abc", isLocked = false, isMain = true)
+        val git = FakeGitLayer(
+            mergedBranchesProvider = { _, _ -> setOf("A") },
+            worktreeListProvider   = { listOf(mainWorktree) },
+        )
+        makeOps(git, FakeStateStore(null), stateLayer = FakeStateLayer(twoNodePluginState()))
+            .syncAll(autoPrune = true)
+
+        assertTrue(git.removedWorktrees.isEmpty())
+    }
+
+    @Test
+    fun `syncAll - ahead-behind recalculated for remaining tracked branches`() {
+        val git = FakeGitLayer(
+            mergedBranchesProvider = { _, _ -> setOf("A") },
+            aheadBehindProvider    = { branch, _ ->
+                if (branch == "B") AheadBehind(ahead = 1, behind = 2) else AheadBehind(0, 0)
+            },
+        )
+        val sl     = FakeStateLayer(twoNodePluginState())
+        val result = makeOps(git, FakeStateStore(null), stateLayer = sl).syncAll()
+
+        val bStatus = result.updatedBranches.find { it.branch == "B" }
+        assertNotNull(bStatus)
+        assertEquals(1, bStatus!!.aheadCount)
+        assertEquals(2, bStatus.behindCount)
+        // Merged branch A must not appear in updatedBranches
+        assertTrue(result.updatedBranches.none { it.branch == "A" })
+    }
+
+    @Test
+    fun `syncAll - fetch failure returns empty result and shows error notification`() {
+        val git = FakeGitLayer(onFetch = { throw RuntimeException("network error") })
+        val ui  = FakeUiLayer()
+        val result = makeOps(git, FakeStateStore(null), ui, FakeStateLayer(twoNodePluginState()))
+            .syncAll()
+
+        assertEquals(emptyList<String>(), result.mergedBranches)
+        assertTrue(ui.notifications.single().contains("network error"))
+        // UI should NOT refresh on early-exit
+        assertEquals(0, ui.refreshCount)
+    }
+
+    @Test
+    fun `syncAll - getMergedRemoteBranches failure returns empty result and shows error notification`() {
+        val git = FakeGitLayer(
+            mergedBranchesProvider = { _, _ -> throw RuntimeException("remote unavailable") },
+        )
+        val ui     = FakeUiLayer()
+        val result = makeOps(git, FakeStateStore(null), ui, FakeStateLayer(twoNodePluginState()))
+            .syncAll()
+
+        assertEquals(emptyList<String>(), result.mergedBranches)
+        assertTrue(ui.notifications.single().contains("remote unavailable"))
+        // UI should NOT refresh on early-exit
+        assertEquals(0, ui.refreshCount)
+    }
+
+    @Test
+    fun `syncAll - summary message includes need-rebase count when branches are behind`() {
+        val git = FakeGitLayer(
+            mergedBranchesProvider = { _, _ -> setOf("A") },
+            aheadBehindProvider    = { _, _ -> AheadBehind(ahead = 0, behind = 3) },
+        )
+        val ui = FakeUiLayer()
+        makeOps(git, FakeStateStore(null), ui, FakeStateLayer(twoNodePluginState())).syncAll()
+
+        val msg = ui.notifications.single()
+        assertTrue(msg.contains("merged"), "Expected 'merged' in: $msg")
+        assertTrue(msg.contains("need rebase"), "Expected 'need rebase' in: $msg")
+    }
+
+    // ── SyncResult.summaryMessage() ───────────────────────────────────────────
+
+    @Test
+    fun `summaryMessage - zero merged, no rebase needed`() {
+        val r = com.github.ydymovopenclawbot.stackworktree.ops.SyncResult(
+            mergedBranches  = emptyList(),
+            prunedWorktrees = emptyList(),
+            updatedBranches = listOf(
+                com.github.ydymovopenclawbot.stackworktree.ops.BranchStatus("feat", 1, 0),
+            ),
+        )
+        assertEquals("Synced: 0 merged", r.summaryMessage())
+    }
+
+    @Test
+    fun `summaryMessage - merged and need rebase`() {
+        val r = com.github.ydymovopenclawbot.stackworktree.ops.SyncResult(
+            mergedBranches  = listOf("A", "B"),
+            prunedWorktrees = emptyList(),
+            updatedBranches = listOf(
+                com.github.ydymovopenclawbot.stackworktree.ops.BranchStatus("C", 0, 1),
+                com.github.ydymovopenclawbot.stackworktree.ops.BranchStatus("D", 2, 0),
+            ),
+        )
+        assertEquals("Synced: 2 merged, 1 need rebase", r.summaryMessage())
+    }
+
+    @Test
+    fun `summaryMessage - merged and pruned worktrees`() {
+        val r = com.github.ydymovopenclawbot.stackworktree.ops.SyncResult(
+            mergedBranches  = listOf("A"),
+            prunedWorktrees = listOf("/wt/A", "/wt/B"),
+            updatedBranches = emptyList(),
+        )
+        assertEquals("Synced: 1 merged, 2 worktrees pruned", r.summaryMessage())
+    }
+
+    @Test
+    fun `summaryMessage - single pruned worktree uses singular label`() {
+        val r = com.github.ydymovopenclawbot.stackworktree.ops.SyncResult(
+            mergedBranches  = listOf("A"),
+            prunedWorktrees = listOf("/wt/A"),
+            updatedBranches = emptyList(),
+        )
+        assertEquals("Synced: 1 merged, 1 worktree pruned", r.summaryMessage())
     }
 }
