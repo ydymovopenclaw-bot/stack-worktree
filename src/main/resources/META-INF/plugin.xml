@@ -71,13 +71,19 @@
         <notificationGroup id="StackWorktree" displayType="BALLOON"/>
         <notificationGroup id="Stack Worktree Notifications" displayType="BALLOON"/>
 
-        <!-- PR layer project services (S6.1) -->
+        <!-- PR layer services (S6.1 / S6.2) -->
+        <!--
+          AutodetectPrProvider inspects the project's git remotes at runtime and delegates
+          to GitLabProvider (S6.2) or GitHubProvider (S6.1) as appropriate.
+        -->
         <projectService
             serviceInterface="com.github.ydymovopenclawbot.stackworktree.pr.PrProvider"
-            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.pr.github.GitHubProvider"/>
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.pr.AutodetectPrProvider"/>
         <projectService
             serviceInterface="com.github.ydymovopenclawbot.stackworktree.pr.PrLayer"
             serviceImplementation="com.github.ydymovopenclawbot.stackworktree.pr.DefaultPrLayer"/>
+        <applicationService
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.pr.gitlab.GitLabTokenStore"/>
 
         <!-- State / Git / Ops / UI layer project services (S3.3) -->
         <projectService

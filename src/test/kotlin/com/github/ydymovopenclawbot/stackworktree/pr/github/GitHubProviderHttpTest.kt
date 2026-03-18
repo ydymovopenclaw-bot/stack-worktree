@@ -4,6 +4,8 @@ import com.github.ydymovopenclawbot.stackworktree.pr.PrInfo
 import com.github.ydymovopenclawbot.stackworktree.pr.PrProviderException
 import com.github.ydymovopenclawbot.stackworktree.pr.PrState
 import com.github.ydymovopenclawbot.stackworktree.pr.PrStatus
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -282,12 +284,8 @@ private class TestableGitHubClient(
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private fun jsonOf(vararg pairs: Pair<String, String>): String {
-        val fields = pairs.joinToString(",") { (k, v) ->
-            "\"$k\":\"${v.replace("\\", "\\\\").replace("\"", "\\\"")}\""
-        }
-        return "{$fields}"
-    }
+    private fun jsonOf(vararg pairs: Pair<String, String>): String =
+        buildJsonObject { pairs.forEach { (k, v) -> put(k, v) } }.toString()
 
     private fun extractSha(prJson: String): String = GitHubJsonParser.parseHeadSha(prJson)
 }
