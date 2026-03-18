@@ -85,7 +85,7 @@ interface GitLayer {
     fun fetchRemote(remote: String)
 
     /**
-     * Returns the set of **local** branch names that have been merged into
+     * Returns the set of branch names (remote-prefix stripped) that have been merged into
      * `<remote>/<trunkBranch>` on the remote.
      *
      * Runs `git branch -r --merged <remote>/<trunkBranch>`, strips the `<remote>/` prefix

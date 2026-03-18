@@ -23,7 +23,7 @@ interface OpsLayer {
      *                  `git worktree remove`. Defaults to `true`.
      * @return [SyncResult] describing what changed; also shown as a notification balloon.
      */
-    fun syncAll(autoPrune: Boolean = true): SyncResult
+    fun syncAll(autoPrune: Boolean = false): SyncResult
 
     /** Cleans up stale worktrees that no longer have a corresponding remote branch. */
     fun pruneStale()

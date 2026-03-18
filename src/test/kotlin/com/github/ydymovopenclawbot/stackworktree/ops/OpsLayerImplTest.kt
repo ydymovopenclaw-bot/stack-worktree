@@ -1008,6 +1008,21 @@ class OpsLayerImplTest {
     }
 
     @Test
+    fun `syncAll - getMergedRemoteBranches failure returns empty result and shows error notification`() {
+        val git = FakeGitLayer(
+            mergedBranchesProvider = { _, _ -> throw RuntimeException("remote unavailable") },
+        )
+        val ui     = FakeUiLayer()
+        val result = makeOps(git, FakeStateStore(null), ui, FakeStateLayer(twoNodePluginState()))
+            .syncAll()
+
+        assertEquals(emptyList<String>(), result.mergedBranches)
+        assertTrue(ui.notifications.single().contains("remote unavailable"))
+        // UI should NOT refresh on early-exit
+        assertEquals(0, ui.refreshCount)
+    }
+
+    @Test
     fun `syncAll - summary message includes need-rebase count when branches are behind`() {
         val git = FakeGitLayer(
             mergedBranchesProvider = { _, _ -> setOf("A") },

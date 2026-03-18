@@ -99,6 +99,15 @@
                 text="Open in New Window"
                 description="Open this worktree in a new IDE window (focuses existing window if already open)"/>
 
+        <!-- S5.3: Sync with remote -->
+        <action id="StackWorktree.Sync"
+                class="com.github.ydymovopenclawbot.stackworktree.ui.actions.SyncAction"
+                text="Sync"
+                description="Fetch remote and sync stacks: detect merged branches, prune worktrees, and refresh ahead/behind counts"
+                icon="AllIcons.Actions.Refresh">
+            <add-to-group group-id="ChangesView.Toolbar" anchor="last"/>
+        </action>
+
         <!--
           Note: Track Branch and Untrack Branch are built programmatically inside
           StacksTabFactory's JPopupMenu and do not have standalone AnAction classes.

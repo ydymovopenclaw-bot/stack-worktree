@@ -24,7 +24,7 @@ import com.intellij.openapi.progress.Task
 class SyncAction : AnAction(
     "Sync",
     "Fetch remote and sync stacks: detect merged branches, prune worktrees, and refresh ahead/behind counts",
-    AllIcons.Actions.CheckOut,
+    AllIcons.Actions.Refresh,
 ) {
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
@@ -36,13 +36,14 @@ class SyncAction : AnAction(
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
 
-        object : Task.Backgroundable(project, "Syncing stacks\u2026", /* canBeCancelled */ false) {
+        object : Task.Backgroundable(project, "Syncing stacks\u2026", /* canBeCancelled */ true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = true
                 indicator.text = "Fetching remote\u2026"
 
                 val ops: OpsLayer = OpsLayerImpl.forProject(project)
                 val result = ops.syncAll()
+                indicator.checkCanceled()
 
                 // Update indicator text with a brief summary while the progress window
                 // is still visible; the notification balloon carries the full message.
