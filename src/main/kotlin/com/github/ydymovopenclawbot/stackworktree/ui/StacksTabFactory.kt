@@ -17,6 +17,7 @@ import com.github.ydymovopenclawbot.stackworktree.state.StackTreeStateListener
 import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
 import com.github.ydymovopenclawbot.stackworktree.state.StateStorage
 import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
+import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.HealthCalculator
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.HealthStatus
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphData
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackGraphPanel
@@ -336,13 +337,24 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     emptyMap()
                 }
 
+                // Detect merged branches from local remote refs (no network call needed —
+                // uses whatever was last fetched).  Failures are silently ignored so a
+                // missing remote or bare repo does not abort the refresh.
+                val trunk  = state?.repoConfig?.trunk  ?: "main"
+                val remote = state?.repoConfig?.remote ?: "origin"
+                val mergedBranches: Set<String> = runCatching {
+                    h.gitLayer.getMergedRemoteBranches(remote, trunk)
+                }.getOrDefault(emptySet())
+
                 // Build StackGraphData for the visual panel.
                 val nodes: List<StackNodeData> = state?.branches?.values?.map { branchNode ->
                     val ab     = aheadBehind[branchNode.name]
-                    val health = when {
-                        ab != null && ab.behind > 0 -> HealthStatus.STALE
-                        else                        -> HealthStatus.CLEAN
-                    }
+                    val health = HealthCalculator.computeSingle(
+                        branch         = branchNode.name,
+                        node           = branchNode,
+                        ab             = ab,
+                        mergedBranches = mergedBranches,
+                    )
                     StackNodeData(
                         id              = branchNode.name,
                         branchName      = branchNode.name,
