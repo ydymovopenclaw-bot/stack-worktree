@@ -10,8 +10,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Thread-safety: [calculate] and [invalidate] may be called concurrently from pooled
  * background threads (e.g. rapid Refresh button clicks or burst GIT_REPO_CHANGE events).
  * The backing store is a [ConcurrentHashMap] so individual reads and writes are atomic.
- * The read-then-write check-and-set in [calculate] is wrapped in [synchronized] to prevent
- * two threads from both seeing a stale entry and each issuing a redundant git call.
+ * Cache reads are synchronized; git I/O runs outside the lock to avoid blocking all
+ * callers when a git process is slow. This means two threads may redundantly compute
+ * the same branch, but the trade-off avoids thread starvation.
  *
  * @param gitLayer Low-level git operations provider.
  * @param ttlMs    How long a cached entry is considered fresh (milliseconds).
@@ -24,8 +25,8 @@ class AheadBehindCalculator(
 ) {
     private data class CachedEntry(val value: AheadBehind, val timestampMs: Long)
 
-    // ConcurrentHashMap for safe concurrent reads; synchronized blocks guard the
-    // read-then-write sequences to avoid duplicate git calls under contention.
+    // ConcurrentHashMap for safe concurrent reads; synchronized blocks guard
+    // cache lookups and writes, but git I/O runs outside the lock.
     private val cache = ConcurrentHashMap<String, CachedEntry>()
 
     /**
@@ -43,17 +44,16 @@ class AheadBehindCalculator(
         val result = mutableMapOf<String, AheadBehind>()
 
         for ((branch, parent) in branches) {
-            val ab = synchronized(cache) {
-                val cached = cache[branch]
-                if (cached != null && now - cached.timestampMs < ttlMs) {
-                    cached.value
-                } else {
-                    // Fetch and cache the fresh value inside the lock so concurrent callers
-                    // for the same branch do not each issue a redundant git invocation.
-                    val fresh = gitLayer.aheadBehind(branch, parent)
-                    cache[branch] = CachedEntry(fresh, now)
-                    fresh
-                }
+            // Check cache under lock, but compute outside to avoid holding the lock
+            // during blocking git I/O (a hung git process would block all callers).
+            val cached = synchronized(cache) {
+                val entry = cache[branch]
+                if (entry != null && now - entry.timestampMs < ttlMs) entry.value else null
+            }
+            val ab = cached ?: run {
+                val fresh = gitLayer.aheadBehind(branch, parent)
+                synchronized(cache) { cache[branch] = CachedEntry(fresh, now) }
+                fresh
             }
             result[branch] = ab
         }

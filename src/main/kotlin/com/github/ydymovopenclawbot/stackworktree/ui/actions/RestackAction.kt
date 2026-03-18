@@ -1,13 +1,19 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.actions
 
+import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
 import com.intellij.icons.AllIcons
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
+
+private val LOG = logger<RestackAction>()
 
 /**
  * Toolbar action: **Restack All**.
@@ -40,11 +46,29 @@ class RestackAction : AnAction(
         object : Task.Backgroundable(project, "Restacking all branches\u2026", /* canBeCancelled */ false) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = false
-                val ops: OpsLayer = OpsLayerImpl.forProject(project)
-                ops.restackAll { current, total, branchName ->
-                    indicator.text     = "Restacking branch $current/$total: $branchName"
-                    indicator.fraction = current.toDouble() / total
+                try {
+                    val ops: OpsLayer = OpsLayerImpl.forProject(project)
+                    ops.restackAll { current, total, branchName ->
+                        indicator.text     = "Restacking branch $current/$total: $branchName"
+                        indicator.fraction = current.toDouble() / total
+                    }
+                } catch (ex: WorktreeException) {
+                    LOG.warn("RestackAction: restack failed", ex)
+                    showNotification("Restack failed: ${ex.message}", NotificationType.ERROR)
+                } catch (ex: IllegalStateException) {
+                    LOG.warn("RestackAction: invalid state", ex)
+                    showNotification(ex.message ?: "Invalid state.", NotificationType.WARNING)
+                } catch (ex: Exception) {
+                    LOG.error("RestackAction: unexpected error", ex)
+                    showNotification("Unexpected error: ${ex.message}", NotificationType.ERROR)
                 }
+            }
+
+            private fun showNotification(message: String, type: NotificationType) {
+                NotificationGroupManager.getInstance()
+                    .getNotificationGroup("StackWorktree")
+                    .createNotification(message, type)
+                    .notify(project)
             }
         }.queue()
     }

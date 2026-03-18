@@ -4,6 +4,7 @@ import com.github.ydymovopenclawbot.stackworktree.git.AheadBehind
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.RebaseResult
 import com.github.ydymovopenclawbot.stackworktree.git.Worktree
+import com.github.ydymovopenclawbot.stackworktree.git.WorktreeCommandException
 import com.github.ydymovopenclawbot.stackworktree.state.BranchHealth
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.PluginState
@@ -923,6 +924,29 @@ class OpsLayerImplTest {
     }
 
     @Test
+    fun `syncAll - merged trunk-child with null parent splices children into trunk's child list`() {
+        // A has parent=null (direct trunk child), B is child of A.
+        // When A is merged, B should be re-parented to null and trunk's children updated.
+        val stackState = StackState(
+            repoConfig = RepoConfig(trunk = "main", remote = "origin"),
+            branches = mapOf(
+                "main" to BranchNode("main", parent = null, children = listOf("A")),
+                "A"    to BranchNode("A",    parent = null, children = listOf("B")),
+                "B"    to BranchNode("B",    parent = "A"),
+            ),
+        )
+        val git   = FakeGitLayer(mergedBranchesProvider = { _, _ -> setOf("A") })
+        val store = FakeStateStore(stackState)
+        makeOps(git, store).syncAll()
+
+        val saved = store.writeHistory.last()
+        assertTrue("A" !in saved.branches, "Merged branch A should be removed")
+        assertEquals(null, saved.branches["B"]?.parent, "B should be re-parented to null (trunk child)")
+        assertEquals(listOf("B"), saved.branches["main"]?.children,
+            "Trunk's children should contain B after A is removed")
+    }
+
+    @Test
     fun `syncAll - trunk is never treated as merged even if remote returns it`() {
         val git = FakeGitLayer(
             // Remote says "main" is merged — should be ignored
@@ -997,7 +1021,7 @@ class OpsLayerImplTest {
 
     @Test
     fun `syncAll - fetch failure returns empty result and shows error notification`() {
-        val git = FakeGitLayer(onFetch = { throw RuntimeException("network error") })
+        val git = FakeGitLayer(onFetch = { throw WorktreeCommandException("network error") })
         val ui  = FakeUiLayer()
         val result = makeOps(git, FakeStateStore(null), ui, FakeStateLayer(twoNodePluginState()))
             .syncAll()
@@ -1011,7 +1035,7 @@ class OpsLayerImplTest {
     @Test
     fun `syncAll - getMergedRemoteBranches failure returns empty result and shows error notification`() {
         val git = FakeGitLayer(
-            mergedBranchesProvider = { _, _ -> throw RuntimeException("remote unavailable") },
+            mergedBranchesProvider = { _, _ -> throw WorktreeCommandException("remote unavailable") },
         )
         val ui     = FakeUiLayer()
         val result = makeOps(git, FakeStateStore(null), ui, FakeStateLayer(twoNodePluginState()))

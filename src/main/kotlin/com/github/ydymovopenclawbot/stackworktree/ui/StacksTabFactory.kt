@@ -332,7 +332,12 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     ?: emptyMap()
 
                 val aheadBehind = if (branchToParent.isNotEmpty()) {
-                    runCatching { h.calculator.calculate(branchToParent) }.getOrDefault(emptyMap())
+                    try {
+                        h.calculator.calculate(branchToParent)
+                    } catch (e: Exception) {
+                        LOG.warn("StackTree: ahead/behind calculation failed", e)
+                        emptyMap()
+                    }
                 } else {
                     emptyMap()
                 }
@@ -342,9 +347,12 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 // missing remote or bare repo does not abort the refresh.
                 val trunk  = state?.repoConfig?.trunk  ?: "main"
                 val remote = state?.repoConfig?.remote ?: "origin"
-                val mergedBranches: Set<String> = runCatching {
+                val mergedBranches: Set<String> = try {
                     h.gitLayer.getMergedRemoteBranches(remote, trunk)
-                }.getOrDefault(emptySet())
+                } catch (e: Exception) {
+                    LOG.warn("StackTree: merged-branch detection failed", e)
+                    emptySet()
+                }
 
                 // Build StackGraphData for the visual panel.
                 val nodes: List<StackNodeData> = state?.branches?.values?.map { branchNode ->
@@ -368,8 +376,12 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 } ?: emptyList()
 
                 // Fetch all worktrees and identify which branches are tracked in the stack graph.
-                val worktrees: List<Worktree> = runCatching { h.gitLayer.worktreeList() }
-                    .getOrDefault(emptyList())
+                val worktrees: List<Worktree> = try {
+                    h.gitLayer.worktreeList()
+                } catch (e: Exception) {
+                    LOG.warn("StackTree: worktree enumeration failed", e)
+                    emptyList()
+                }
                 // Derive trackedBranches from the same resolved state so that the trunk branch
                 // (which has no parent and is absent from getAllParents().keys) is included.
                 val trackedBranches: Set<String> = state?.branches?.keys.orEmpty()
@@ -658,6 +670,8 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             OpenInTerminalAction.perform(project, wt)
         } catch (_: NoClassDefFoundError) {
             LOG.warn("Terminal plugin not available; cannot open worktree in terminal")
+        } catch (e: Exception) {
+            LOG.warn("Failed to open worktree in terminal: ${e.message}", e)
         }
     }
 

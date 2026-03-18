@@ -83,7 +83,7 @@ class OpsLayerImpl(
         // ── 1. Fetch ──────────────────────────────────────────────────────────
         try {
             git.fetchRemote(remote)
-        } catch (e: Exception) {
+        } catch (e: WorktreeException) {
             LOG.warn("syncAll: fetch '$remote' failed", e)
             val msg = "Sync failed: could not fetch '$remote': ${e.message}"
             ui.notify(msg)
@@ -93,7 +93,7 @@ class OpsLayerImpl(
         // ── 2. Detect merged branches ─────────────────────────────────────────
         val mergedOnRemote: Set<String> = try {
             git.getMergedRemoteBranches(remote, trunk)
-        } catch (e: Exception) {
+        } catch (e: WorktreeException) {
             LOG.warn("syncAll: getMergedRemoteBranches failed", e)
             ui.notify("Sync failed: could not detect merged branches: ${e.message}")
             return SyncResult(emptyList(), emptyList(), emptyList())
@@ -108,7 +108,9 @@ class OpsLayerImpl(
         // ── 3. Remove merged branches, re-parent their children ───────────────
         val prunedWorktrees = mutableListOf<String>()
         val allWorktrees: List<com.github.ydymovopenclawbot.stackworktree.git.Worktree> =
-            runCatching { git.worktreeList() }.getOrDefault(emptyList())
+            runCatching { git.worktreeList() }
+                .onFailure { LOG.warn("syncAll: worktreeList failed", it) }
+                .getOrDefault(emptyList())
 
         var updatedPluginState = pluginState
         var updatedStackState  = stackState
@@ -134,16 +136,17 @@ class OpsLayerImpl(
 
                 // Splice the merged node's children into the parent's child list at the
                 // same position the merged branch occupied.
-                if (parentName != null) {
-                    val parentNode = updated[parentName]
-                    if (parentNode != null) {
-                        val idx      = parentNode.children.indexOf(merged)
-                        val newList  = parentNode.children.toMutableList()
-                        if (idx >= 0) newList.removeAt(idx)
-                        val insertAt = if (idx >= 0) idx else newList.size
-                        newList.addAll(insertAt, mergedNode.children)
-                        updated[parentName] = parentNode.copy(children = newList)
-                    }
+                // When parentName is null the merged branch is a direct child of trunk,
+                // so the trunk node's children list must be updated instead.
+                val spliceTarget = parentName ?: ss.repoConfig.trunk
+                val parentNode = updated[spliceTarget]
+                if (parentNode != null) {
+                    val idx      = parentNode.children.indexOf(merged)
+                    val newList  = parentNode.children.toMutableList()
+                    if (idx >= 0) newList.removeAt(idx)
+                    val insertAt = if (idx >= 0) idx else newList.size
+                    newList.addAll(insertAt, mergedNode.children)
+                    updated[spliceTarget] = parentNode.copy(children = newList)
                 }
 
                 ss.copy(branches = updated)
@@ -179,14 +182,23 @@ class OpsLayerImpl(
 
         // ── 5. Persist ────────────────────────────────────────────────────────
         sl.save(updatedPluginState)
+        var stateWriteFailed = false
         if (updatedStackState != null) {
             runCatching { store.write(updatedStackState) }
-                .onFailure { LOG.warn("syncAll: failed to write StackState: ${it.message}") }
+                .onFailure {
+                    stateWriteFailed = true
+                    LOG.warn("syncAll: failed to write StackState: ${it.message}", it)
+                }
         }
 
         // ── 6. Notify & refresh ───────────────────────────────────────────────
         val result = SyncResult(mergedTracked, prunedWorktrees, branchStatuses)
-        ui.notify(result.summaryMessage())
+        val message = if (stateWriteFailed) {
+            result.summaryMessage() + " (warning: state persistence failed — changes may not survive restart)"
+        } else {
+            result.summaryMessage()
+        }
+        ui.notify(message)
         ui.refresh()
 
         LOG.info(
@@ -621,54 +633,6 @@ class OpsLayerImpl(
             LOG.warn("rollback: could not delete '$branchName': ${e.message}")
             false
         }
-    }
-
-    private fun buildStateForInsertAbove(
-        original: StackState,
-        targetBranch: String,
-        newBranchName: String,
-        oldParent: String?,
-    ): StackState {
-        val newNode = BranchNode(name = newBranchName, parent = oldParent, children = listOf(targetBranch))
-        val updatedTarget = (original.branches[targetBranch] ?: BranchNode(name = targetBranch, parent = null))
-            .copy(parent = newBranchName)
-        val updatedOldParent = oldParent?.let { p ->
-            original.branches[p]?.let { node ->
-                node.copy(children = node.children.map { if (it == targetBranch) newBranchName else it })
-            }
-        }
-
-        return original.copy(
-            branches = buildMap {
-                putAll(original.branches)
-                put(newBranchName, newNode)
-                put(targetBranch, updatedTarget)
-                if (updatedOldParent != null && oldParent != null) put(oldParent, updatedOldParent)
-            }
-        )
-    }
-
-    private fun buildStateForInsertBelow(
-        original: StackState,
-        targetBranch: String,
-        newBranchName: String,
-        children: List<String>,
-    ): StackState {
-        val newNode = BranchNode(name = newBranchName, parent = targetBranch, children = children)
-        val updatedTarget = (original.branches[targetBranch] ?: BranchNode(name = targetBranch, parent = null))
-            .copy(children = listOf(newBranchName))
-        val updatedChildren = children.mapNotNull { child ->
-            original.branches[child]?.copy(parent = newBranchName)?.let { child to it }
-        }.toMap()
-
-        return original.copy(
-            branches = buildMap {
-                putAll(original.branches)
-                put(newBranchName, newNode)
-                put(targetBranch, updatedTarget)
-                putAll(updatedChildren)
-            }
-        )
     }
 
     private fun readOrInit(store: StackStateStore, seedBranch: String): StackState =
