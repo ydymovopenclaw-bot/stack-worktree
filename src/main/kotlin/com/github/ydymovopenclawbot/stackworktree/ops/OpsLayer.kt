@@ -138,6 +138,27 @@ interface OpsLayer {
     fun rebaseOntoParent(branch: String)
 
     /**
+     * Submits the stack: pushes every non-trunk branch bottom-to-top, then creates or
+     * updates the corresponding pull request on the hosting service (GitHub / GitLab).
+     *
+     * Each PR description includes a Markdown stack-navigation table listing all branches
+     * in the stack in order, with the current branch's row **bolded** so reviewers can
+     * immediately orient themselves.
+     *
+     * On a subsequent call the operation is idempotent: already-open PRs are updated
+     * (never duplicated), and the navigation table is refreshed with the latest PR URLs.
+     *
+     * PR metadata (number, URL, status) is persisted in the
+     * [com.github.ydymovopenclawbot.stackworktree.state.StackState] after every submit.
+     *
+     * **Must be called from a background thread** — performs blocking git push and
+     * network I/O.
+     *
+     * @return [SubmitResult] describing what was created / updated.
+     */
+    fun submitStack(): SubmitResult
+
+    /**
      * Rebases every tracked branch onto its parent in bottom-to-top (BFS) order, cascading
      * from trunk through all stacks.
      *
