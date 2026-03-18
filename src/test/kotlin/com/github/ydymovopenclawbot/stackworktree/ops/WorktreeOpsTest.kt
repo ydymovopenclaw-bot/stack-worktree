@@ -52,6 +52,8 @@ class WorktreeOpsTest {
         override fun worktreeRemove(path: String) { removeCalls += path }
         override fun worktreeList(): List<Worktree> = worktreeListResult
 
+        override fun fetchRemote(remote: String)                                          = unsupported()
+        override fun getMergedRemoteBranches(r: String, t: String): Set<String>        = unsupported()
         override fun worktreePrune()                                                   = unsupported()
         override fun listLocalBranches(): List<String>                                 = unsupported()
         override fun aheadBehind(branch: String, parent: String): AheadBehind         = unsupported()

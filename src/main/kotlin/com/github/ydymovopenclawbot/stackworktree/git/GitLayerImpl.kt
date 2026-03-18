@@ -204,6 +204,34 @@ class GitLayerImpl(
         return AheadBehind(ahead = parts[1].toInt(), behind = parts[0].toInt())
     }
 
+    override fun fetchRemote(remote: String) {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.FETCH).also {
+            it.addParameters(remote)
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) throw WorktreeCommandException(
+            "Failed to fetch remote '$remote': ${result.errorOutputAsJoinedString}"
+        )
+    }
+
+    override fun getMergedRemoteBranches(remote: String, trunkBranch: String): Set<String> {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.BRANCH).also {
+            it.addParameters("-r", "--merged", "$remote/$trunkBranch")
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) throw WorktreeCommandException(
+            "Failed to list merged remote branches: ${result.errorOutputAsJoinedString}"
+        )
+        // Each line looks like: "  origin/feature-a" or "  origin/HEAD -> origin/main"
+        val prefix = "$remote/"
+        return result.output
+            .map { it.trim() }
+            .filter { it.startsWith(prefix) && !it.contains("->") }
+            .map { it.removePrefix(prefix) }
+            .filter { it.isNotEmpty() && it != trunkBranch }
+            .toSet()
+    }
+
     override fun checkoutNewBranch(branch: String) {
         val result = Git.getInstance().runCommand(
             GitLineHandler(project, requireRoot(), GitCommand.CHECKOUT).also {

@@ -1,27 +1,53 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.actions
 
+import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
+import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.components.service
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.Task
 
 /**
- * Syncs stacks with the remote (disabled — coming in a future sprint).
+ * Toolbar action: **Sync**.
  *
- * The tooltip is set on every [update] call so it remains visible even in the disabled state.
+ * Fetches the remote, removes merged branches from the stack (re-parenting their
+ * children), prunes linked worktrees for merged branches, and recalculates
+ * ahead/behind status for every remaining tracked branch.
+ *
+ * Runs on a background thread via [Task.Backgroundable] so the EDT is never blocked.
+ * A summary notification balloon is shown by [OpsLayer.syncAll] on completion, e.g.:
+ * `"Synced: 2 merged, 3 need rebase"`.
  */
 class SyncAction : AnAction(
     "Sync",
-    "Coming soon: sync stacks with the remote",
-    AllIcons.Actions.Download,
+    "Fetch remote and sync stacks: detect merged branches, prune worktrees, and refresh ahead/behind counts",
+    AllIcons.Actions.CheckOut,
 ) {
-    override fun actionPerformed(e: AnActionEvent) = Unit
-
-    override fun update(e: AnActionEvent) {
-        e.presentation.isEnabled = false
-        e.presentation.text = "Sync (coming soon)"
-        e.presentation.description = "Coming soon: sync stacks with the remote"
-    }
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
+
+    override fun update(e: AnActionEvent) {
+        e.presentation.isEnabled = e.project != null
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+
+        object : Task.Backgroundable(project, "Syncing stacks\u2026", /* canBeCancelled */ false) {
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = true
+                indicator.text = "Fetching remote\u2026"
+
+                val ops: OpsLayer = OpsLayerImpl.forProject(project)
+                val result = ops.syncAll()
+
+                // Update indicator text with a brief summary while the progress window
+                // is still visible; the notification balloon carries the full message.
+                indicator.text = result.summaryMessage()
+            }
+        }.queue()
+    }
 }

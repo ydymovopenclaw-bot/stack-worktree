@@ -1,6 +1,7 @@
 package com.github.ydymovopenclawbot.stackworktree.ops
 
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
+import com.github.ydymovopenclawbot.stackworktree.ops.SyncResult
 
 /**
  * Ops layer — orchestrates higher-level operations that coordinate git and state layers.
@@ -9,8 +10,20 @@ interface OpsLayer {
     /** Switches the active worktree context to [worktreePath]. */
     fun switchWorktree(worktreePath: String)
 
-    /** Synchronises all worktrees with the latest remote state. */
-    fun syncAll()
+    /**
+     * Fetches the remote, removes merged branches from the stack (re-parenting their
+     * children), optionally prunes linked worktrees for merged branches, and recalculates
+     * ahead/behind status for every remaining tracked branch.
+     *
+     * A summary notification balloon is shown on completion. Runs on the calling thread —
+     * callers are responsible for dispatching to a background thread
+     * (e.g. via [com.intellij.openapi.progress.Task.Backgroundable]).
+     *
+     * @param autoPrune When `true`, linked worktrees for merged branches are removed via
+     *                  `git worktree remove`. Defaults to `true`.
+     * @return [SyncResult] describing what changed; also shown as a notification balloon.
+     */
+    fun syncAll(autoPrune: Boolean = true): SyncResult
 
     /** Cleans up stale worktrees that no longer have a corresponding remote branch. */
     fun pruneStale()

@@ -11,6 +11,7 @@ import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
 import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackStateStore
 import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
+import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
 import com.github.ydymovopenclawbot.stackworktree.state.TrackedBranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
 import com.github.ydymovopenclawbot.stackworktree.ui.STACK_STATE_TOPIC
@@ -40,13 +41,14 @@ class OpsLayerImpl(
     private val gitLayerOverride: GitLayer? = null,
     private val stateStoreOverride: StackStateStore? = null,
     private val uiLayerOverride: UiLayer? = null,
+    private val stateLayerOverride: StateLayer? = null,
 ) : OpsLayer {
 
     companion object {
         fun forProject(project: Project): OpsLayer = OpsLayerImpl(project)
     }
 
-    private val state get() = project.service<StateLayer>()
+    private fun stateLayer(): StateLayer = stateLayerOverride ?: project.service<StateLayer>()
 
     private fun gitLayer(): GitLayer = gitLayerOverride ?: GitLayerImpl(project)
 
@@ -65,8 +67,134 @@ class OpsLayerImpl(
     override fun switchWorktree(worktreePath: String): Unit =
         TODO("switchWorktree not yet implemented")
 
-    override fun syncAll(): Unit =
-        TODO("syncAll not yet implemented")
+    override fun syncAll(autoPrune: Boolean): SyncResult {
+        val git   = gitLayer()
+        val sl    = stateLayer()
+        val store = stateStore()
+        val ui    = uiLayer()
+
+        // ── Determine trunk / remote ──────────────────────────────────────────
+        val pluginState = sl.load()
+        val stackState  = store.read()
+        val trunk  = stackState?.repoConfig?.trunk  ?: pluginState.trunkBranch ?: "main"
+        val remote = stackState?.repoConfig?.remote ?: "origin"
+
+        // ── 1. Fetch ──────────────────────────────────────────────────────────
+        try {
+            git.fetchRemote(remote)
+        } catch (e: Exception) {
+            LOG.warn("syncAll: fetch '$remote' failed", e)
+            val msg = "Sync failed: could not fetch '$remote': ${e.message}"
+            ui.notify(msg)
+            return SyncResult(emptyList(), emptyList(), emptyList())
+        }
+
+        // ── 2. Detect merged branches ─────────────────────────────────────────
+        val mergedOnRemote: Set<String> = try {
+            git.getMergedRemoteBranches(remote, trunk)
+        } catch (e: Exception) {
+            LOG.warn("syncAll: getMergedRemoteBranches failed", e)
+            ui.notify("Sync failed: could not detect merged branches: ${e.message}")
+            return SyncResult(emptyList(), emptyList(), emptyList())
+        }
+
+        // Intersect with branches that are currently tracked by this plugin.
+        val trackedInPluginState: Set<String> = pluginState.trackedBranches.keys.toSet() - trunk
+        val trackedInStackState:  Set<String> = stackState?.branches?.keys.orEmpty() - trunk
+        val allTracked = trackedInPluginState + trackedInStackState
+        val mergedTracked: List<String> = allTracked.filter { it in mergedOnRemote }
+
+        // ── 3. Remove merged branches, re-parent their children ───────────────
+        val prunedWorktrees = mutableListOf<String>()
+        val allWorktrees: List<com.github.ydymovopenclawbot.stackworktree.git.Worktree> =
+            runCatching { git.worktreeList() }.getOrDefault(emptyList())
+
+        var updatedPluginState = pluginState
+        var updatedStackState  = stackState
+
+        for (merged in mergedTracked) {
+            // Remove from PluginState tree (re-parents children automatically).
+            if (merged in updatedPluginState.trackedBranches) {
+                updatedPluginState = Algorithms.applyUntrackBranch(updatedPluginState, merged)
+            }
+
+            // Remove from StackState tree (re-parent children, splice parent's child list).
+            updatedStackState = updatedStackState?.let { ss ->
+                val mergedNode = ss.branches[merged] ?: return@let ss
+                val parentName = mergedNode.parent
+                val updated    = ss.branches.toMutableMap()
+
+                updated.remove(merged)
+
+                // Re-parent each child of the merged branch.
+                for (child in mergedNode.children) {
+                    updated[child] = updated[child]?.copy(parent = parentName) ?: continue
+                }
+
+                // Splice the merged node's children into the parent's child list at the
+                // same position the merged branch occupied.
+                if (parentName != null) {
+                    val parentNode = updated[parentName]
+                    if (parentNode != null) {
+                        val idx      = parentNode.children.indexOf(merged)
+                        val newList  = parentNode.children.toMutableList()
+                        if (idx >= 0) newList.removeAt(idx)
+                        val insertAt = if (idx >= 0) idx else newList.size
+                        newList.addAll(insertAt, mergedNode.children)
+                        updated[parentName] = parentNode.copy(children = newList)
+                    }
+                }
+
+                ss.copy(branches = updated)
+            }
+
+            // Optionally prune the linked worktree (skip the main worktree).
+            if (autoPrune) {
+                val wt = allWorktrees.find { it.branch == merged && !it.isMain }
+                if (wt != null) {
+                    try {
+                        git.worktreeRemove(wt.path)
+                        prunedWorktrees += wt.path
+                        LOG.info("syncAll: pruned worktree for merged branch '$merged': ${wt.path}")
+                    } catch (e: WorktreeException) {
+                        LOG.warn("syncAll: failed to prune worktree '${wt.path}' for '$merged': ${e.message}")
+                    }
+                }
+            }
+        }
+
+        // ── 4. Recalculate ahead/behind for remaining tracked branches ─────────
+        // Use the parent recorded in PluginState; fall back to trunk when unknown.
+        val remainingTracked: Set<String> =
+            updatedPluginState.trackedBranches.keys.toSet() - trunk
+
+        val branchStatuses: List<BranchStatus> = remainingTracked.mapNotNull { branch ->
+            val parent = updatedPluginState.trackedBranches[branch]?.parentName ?: trunk
+            runCatching { git.aheadBehind(branch, parent) }
+                .onFailure { LOG.warn("syncAll: aheadBehind('$branch', '$parent') failed: ${it.message}") }
+                .getOrNull()
+                ?.let { ab -> BranchStatus(branch, ab.ahead, ab.behind) }
+        }
+
+        // ── 5. Persist ────────────────────────────────────────────────────────
+        sl.save(updatedPluginState)
+        if (updatedStackState != null) {
+            runCatching { store.write(updatedStackState) }
+                .onFailure { LOG.warn("syncAll: failed to write StackState: ${it.message}") }
+        }
+
+        // ── 6. Notify & refresh ───────────────────────────────────────────────
+        val result = SyncResult(mergedTracked, prunedWorktrees, branchStatuses)
+        ui.notify(result.summaryMessage())
+        ui.refresh()
+
+        LOG.info(
+            "syncAll: complete — ${mergedTracked.size} merged, " +
+                "${branchStatuses.count { it.behindCount > 0 }} need rebase, " +
+                "${prunedWorktrees.size} worktrees pruned"
+        )
+        return result
+    }
 
     override fun pruneStale(): Unit =
         TODO("pruneStale not yet implemented")
@@ -199,12 +327,14 @@ class OpsLayerImpl(
     // ── Track / Untrack ───────────────────────────────────────────────────────
 
     override fun trackBranch(branch: String, parentBranch: String) {
-        state.save(Algorithms.applyTrackBranch(state.load(), branch, parentBranch))
+        val sl = stateLayer()
+        sl.save(Algorithms.applyTrackBranch(sl.load(), branch, parentBranch))
         notifyStateChanged()
     }
 
     override fun untrackBranch(branch: String) {
-        state.save(Algorithms.applyUntrackBranch(state.load(), branch))
+        val sl = stateLayer()
+        sl.save(Algorithms.applyUntrackBranch(sl.load(), branch))
         notifyStateChanged()
     }
 
