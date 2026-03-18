@@ -31,6 +31,7 @@ class AheadBehindCalculatorTest {
             RebaseResult.Success
         override fun fetchRemote(remote: String)                                      = Unit
         override fun getMergedRemoteBranches(remote: String, trunkBranch: String): Set<String> = emptySet()
+        override fun push(branch: String, remote: String, forceWithLease: Boolean) = Unit
         override fun checkoutNewBranch(branch: String) = Unit
         override fun stageAll() = Unit
         override fun commit(message: String) = Unit

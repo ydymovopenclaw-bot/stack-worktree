@@ -232,6 +232,18 @@ class GitLayerImpl(
             .toSet()
     }
 
+    override fun push(branch: String, remote: String, forceWithLease: Boolean) {
+        val handler = GitLineHandler(project, requireRoot(), GitCommand.PUSH).also {
+            it.addParameters("--set-upstream")
+            if (forceWithLease) it.addParameters("--force-with-lease")
+            it.addParameters(remote, branch)
+        }
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) throw WorktreeCommandException(
+            "Failed to push '$branch' to '$remote': ${result.errorOutputAsJoinedString}"
+        )
+    }
+
     override fun checkoutNewBranch(branch: String) {
         val result = Git.getInstance().runCommand(
             GitLineHandler(project, requireRoot(), GitCommand.CHECKOUT).also {

@@ -282,6 +282,7 @@ class OpsLayerImplTest {
             }
         }
 
+        override fun push(branch: String, remote: String, forceWithLease: Boolean) = Unit
         override fun checkoutNewBranch(branch: String) = unsupported()
         override fun stageAll()                         = unsupported()
         override fun commit(message: String)            = unsupported()

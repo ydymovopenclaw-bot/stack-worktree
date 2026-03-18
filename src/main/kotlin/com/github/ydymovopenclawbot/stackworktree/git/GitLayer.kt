@@ -96,6 +96,18 @@ interface GitLayer {
     fun getMergedRemoteBranches(remote: String, trunkBranch: String): Set<String>
 
     /**
+     * Pushes [branch] to [remote] (`git push --set-upstream [--force-with-lease] <remote> <branch>`).
+     *
+     * Setting `--set-upstream` ensures the local tracking reference is configured so that
+     * subsequent `git pull` / `git push` commands work without explicit remote/branch arguments.
+     * `--force-with-lease` (when enabled) refuses the push if the remote tip has advanced
+     * beyond what was last fetched, preventing accidental overwrites.
+     *
+     * @throws WorktreeCommandException if the push is rejected or the network is unavailable.
+     */
+    fun push(branch: String, remote: String = "origin", forceWithLease: Boolean = false)
+
+    /**
      * Creates a new local branch from the current HEAD (`git checkout -b <branch>`).
      *
      * @throws BranchOperationException if the branch already exists or the command fails.
