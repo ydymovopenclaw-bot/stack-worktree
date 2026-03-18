@@ -4,8 +4,6 @@ import com.github.ydymovopenclawbot.stackworktree.pr.PrInfo
 import com.github.ydymovopenclawbot.stackworktree.pr.PrProviderException
 import com.github.ydymovopenclawbot.stackworktree.pr.PrState
 import com.github.ydymovopenclawbot.stackworktree.pr.PrStatus
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -71,6 +69,20 @@ class GitHubProviderHttpTest {
         val body = req.body.readUtf8()
         assertTrue(body.contains("\"head\""), "body missing 'head' field: $body")
         assertTrue(body.contains("\"base\""), "body missing 'base' field: $body")
+    }
+
+    @Test
+    fun `createPr escapes control characters in title and body`() {
+        server.enqueue(MockResponse().setResponseCode(201).setBody(prJson(number = 11)))
+
+        // \u0001 is a control character below 0x20 that was previously un-escaped
+        client.createPr("feature", "main", "Title\u0001Here", "Body\u0000Text")
+
+        val req = server.takeRequest()
+        val body = req.body.readUtf8()
+        // kotlinx.serialization encodes control chars as \uXXXX — raw bytes must not appear
+        assertTrue('\u0001' !in body, "Control char \\u0001 must be escaped in JSON body: $body")
+        assertTrue('\u0000' !in body, "Control char \\u0000 must be escaped in JSON body: $body")
     }
 
     // ── updatePr ─────────────────────────────────────────────────────────────
@@ -277,10 +289,5 @@ private class TestableGitHubClient(
         return "{$fields}"
     }
 
-    private fun extractSha(prJson: String): String = try {
-        kotlinx.serialization.json.Json.parseToJsonElement(prJson)
-            .jsonObject["head"]?.jsonObject?.get("sha")?.jsonPrimitive?.content ?: ""
-    } catch (_: Exception) {
-        ""
-    }
+    private fun extractSha(prJson: String): String = GitHubJsonParser.parseHeadSha(prJson)
 }

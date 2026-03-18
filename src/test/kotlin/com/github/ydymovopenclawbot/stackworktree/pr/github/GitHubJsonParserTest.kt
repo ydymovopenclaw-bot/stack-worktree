@@ -141,6 +141,24 @@ class GitHubJsonParserTest {
         assertEquals(ReviewState.REVIEW_REQUIRED, GitHubJsonParser.parseReviews(json))
     }
 
+    // ── parseHeadSha ──────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseHeadSha extracts sha from PR json`() {
+        val prJson = """{"number":1,"title":"t","html_url":"u","state":"open","merged":false,"head":{"sha":"cafebabe"}}"""
+        assertEquals("cafebabe", GitHubJsonParser.parseHeadSha(prJson))
+    }
+
+    @Test
+    fun `parseHeadSha returns empty string for missing head field`() {
+        assertEquals("", GitHubJsonParser.parseHeadSha("""{"number":1}"""))
+    }
+
+    @Test
+    fun `parseHeadSha returns empty string for malformed json`() {
+        assertEquals("", GitHubJsonParser.parseHeadSha("not-json"))
+    }
+
     // ── JSON builders ─────────────────────────────────────────────────────────
 
     private fun prJson(
