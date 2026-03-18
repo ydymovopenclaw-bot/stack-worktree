@@ -127,6 +127,31 @@ class GitExecutor(
      */
     suspend fun remoteUrl(remote: String = "origin"): Result<String> =
         exec("remote", "get-url", remote).map { it.stdout }
+
+    /**
+     * Pushes [branch] to [remote] (default `"origin"`), setting the upstream tracking
+     * reference with `--set-upstream` so subsequent push/pull work without explicit targets.
+     *
+     * When [forceWithLease] is `true`, `--force-with-lease` is appended, which refuses
+     * the push if the remote tip has advanced beyond what was last fetched — preventing
+     * accidental overwrites of concurrent commits.
+     *
+     * Fails with [GitException] if the push is rejected or a network error occurs.
+     */
+    suspend fun push(
+        branch: String,
+        remote: String = "origin",
+        forceWithLease: Boolean = false,
+    ): Result<Unit> {
+        val args = buildList {
+            add("push")
+            add("--set-upstream")
+            if (forceWithLease) add("--force-with-lease")
+            add(remote)
+            add(branch)
+        }
+        return exec(*args.toTypedArray()).map { }
+    }
 }
 
 /** Thrown when a git command exits with a non-zero status. */

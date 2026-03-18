@@ -19,6 +19,7 @@ import java.nio.file.Path
  *  - LOG        → git log
  *  - BRANCH     → git branch
  *  - REMOTE     → git remote
+ *  - PUSH       → git push
  */
 class IntelliJGitRunner(private val project: Project) : GitRunner {
 
@@ -28,6 +29,7 @@ class IntelliJGitRunner(private val project: Project) : GitRunner {
         "log" to GitCommand.LOG,
         "branch" to GitCommand.BRANCH,
         "remote" to GitCommand.REMOTE,
+        "push" to GitCommand.PUSH,
     )
 
     override fun run(workDir: Path, args: List<String>): GitRunResult {

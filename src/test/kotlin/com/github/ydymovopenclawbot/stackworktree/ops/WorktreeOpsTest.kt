@@ -63,6 +63,7 @@ class WorktreeOpsTest {
         override fun branchExists(branchName: String): Boolean                         = unsupported()
         override fun resetBranch(branchName: String, toCommit: String)                = unsupported()
         override fun rebaseOnto(b: String, nb: String, u: String): RebaseResult       = unsupported()
+        override fun push(branch: String, remote: String, forceWithLease: Boolean)     = unsupported()
         override fun checkoutNewBranch(branch: String)                                 = unsupported()
         override fun stageAll()                                                        = unsupported()
         override fun commit(message: String)                                           = unsupported()

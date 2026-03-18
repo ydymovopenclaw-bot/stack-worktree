@@ -4,6 +4,7 @@ import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl
 import com.github.ydymovopenclawbot.stackworktree.git.ProcessGitRunner
 import com.github.ydymovopenclawbot.stackworktree.git.RebaseResult
+import com.github.ydymovopenclawbot.stackworktree.pr.PrProvider
 import com.github.ydymovopenclawbot.stackworktree.state.BranchHealth
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.PluginState
@@ -198,6 +199,27 @@ class OpsLayerImpl(
 
     override fun pruneStale(): Unit =
         TODO("pruneStale not yet implemented")
+
+    override fun submitStack(): SubmitResult {
+        val git      = gitLayer()
+        val store    = stateStore()
+        val provider = project.service<PrProvider>()
+        val ui       = uiLayer()
+
+        val useCase = SubmitStackUseCase(git, provider, store)
+        val result  = useCase.execute()
+
+        when (result) {
+            is SubmitResult.Success -> {
+                ui.notify(result.summaryMessage())
+                ui.refresh()
+            }
+            is SubmitResult.NoState ->
+                ui.notify("Submit Stack: no stack state found. Track some branches first.")
+        }
+
+        return result
+    }
 
     override fun insertBranchAbove(targetBranch: String, newBranchName: String) {
         val git = gitLayer()
