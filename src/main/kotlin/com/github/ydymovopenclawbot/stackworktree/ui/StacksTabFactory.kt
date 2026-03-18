@@ -332,7 +332,9 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     ?: emptyMap()
 
                 val aheadBehind = if (branchToParent.isNotEmpty()) {
-                    runCatching { h.calculator.calculate(branchToParent) }.getOrDefault(emptyMap())
+                    runCatching { h.calculator.calculate(branchToParent) }
+                        .onFailure { LOG.warn("StackTree: ahead/behind calculation failed", it) }
+                        .getOrDefault(emptyMap())
                 } else {
                     emptyMap()
                 }
@@ -344,7 +346,9 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 val remote = state?.repoConfig?.remote ?: "origin"
                 val mergedBranches: Set<String> = runCatching {
                     h.gitLayer.getMergedRemoteBranches(remote, trunk)
-                }.getOrDefault(emptySet())
+                }
+                    .onFailure { LOG.warn("StackTree: merged-branch detection failed", it) }
+                    .getOrDefault(emptySet())
 
                 // Build StackGraphData for the visual panel.
                 val nodes: List<StackNodeData> = state?.branches?.values?.map { branchNode ->
@@ -369,6 +373,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
 
                 // Fetch all worktrees and identify which branches are tracked in the stack graph.
                 val worktrees: List<Worktree> = runCatching { h.gitLayer.worktreeList() }
+                    .onFailure { LOG.warn("StackTree: worktree enumeration failed", it) }
                     .getOrDefault(emptyList())
                 // Derive trackedBranches from the same resolved state so that the trunk branch
                 // (which has no parent and is absent from getAllParents().keys) is included.
@@ -658,6 +663,8 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             OpenInTerminalAction.perform(project, wt)
         } catch (_: NoClassDefFoundError) {
             LOG.warn("Terminal plugin not available; cannot open worktree in terminal")
+        } catch (e: Exception) {
+            LOG.warn("Failed to open worktree in terminal: ${e.message}", e)
         }
     }
 

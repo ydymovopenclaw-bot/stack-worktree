@@ -43,17 +43,16 @@ class AheadBehindCalculator(
         val result = mutableMapOf<String, AheadBehind>()
 
         for ((branch, parent) in branches) {
-            val ab = synchronized(cache) {
-                val cached = cache[branch]
-                if (cached != null && now - cached.timestampMs < ttlMs) {
-                    cached.value
-                } else {
-                    // Fetch and cache the fresh value inside the lock so concurrent callers
-                    // for the same branch do not each issue a redundant git invocation.
-                    val fresh = gitLayer.aheadBehind(branch, parent)
-                    cache[branch] = CachedEntry(fresh, now)
-                    fresh
-                }
+            // Check cache under lock, but compute outside to avoid holding the lock
+            // during blocking git I/O (a hung git process would block all callers).
+            val cached = synchronized(cache) {
+                val entry = cache[branch]
+                if (entry != null && now - entry.timestampMs < ttlMs) entry.value else null
+            }
+            val ab = cached ?: run {
+                val fresh = gitLayer.aheadBehind(branch, parent)
+                synchronized(cache) { cache[branch] = CachedEntry(fresh, now) }
+                fresh
             }
             result[branch] = ab
         }

@@ -130,14 +130,12 @@ object GitHubJsonParser {
     /**
      * Extracts the head commit SHA from a raw GitHub PR JSON response.
      *
-     * Returns an empty string when the field is absent or the JSON is malformed
-     * (the upstream API call will then surface a descriptive 404/422 error).
+     * @throws IllegalArgumentException if `head.sha` is missing from the response.
      */
-    fun parseHeadSha(rawJson: String): String = try {
-        json.parseToJsonElement(rawJson).jsonObject["head"]
-            ?.jsonObject?.get("sha")?.jsonPrimitive?.content ?: ""
-    } catch (_: Exception) {
-        ""
+    fun parseHeadSha(rawJson: String): String {
+        val root = json.parseToJsonElement(rawJson).jsonObject
+        return root["head"]?.jsonObject?.get("sha")?.jsonPrimitive?.content
+            ?: throw IllegalArgumentException("GitHub PR response missing 'head.sha'")
     }
 
     // ── Full status ───────────────────────────────────────────────────────────

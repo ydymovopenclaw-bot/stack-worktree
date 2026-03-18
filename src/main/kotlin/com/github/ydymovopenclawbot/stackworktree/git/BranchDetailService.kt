@@ -2,12 +2,15 @@ package com.github.ydymovopenclawbot.stackworktree.git
 
 import com.github.ydymovopenclawbot.stackworktree.model.CommitEntry
 import com.github.ydymovopenclawbot.stackworktree.model.StackNode
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import git4idea.GitUtil
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
 import git4idea.repo.GitRepository
+
+private val LOG = logger<BranchDetailService>()
 
 /**
  * Fetches branch detail data from the local git repository using Git4Idea APIs.
@@ -35,7 +38,10 @@ class BranchDetailService(private val project: Project) {
         val handler = GitLineHandler(project, repo.root, GitCommand.WORKTREE)
         handler.addParameters("list", "--porcelain")
         val result = Git.getInstance().runCommand(handler)
-        if (!result.success()) return emptyMap()
+        if (!result.success()) {
+            LOG.warn("BranchDetailService: worktreesByBranch failed: ${result.errorOutputAsJoinedString}")
+            return emptyMap()
+        }
 
         // Porcelain format: blocks separated by blank lines
         // worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n\n
@@ -94,7 +100,10 @@ class BranchDetailService(private val project: Project) {
         val handler = GitLineHandler(project, repo.root, GitCommand.REV_LIST)
         handler.addParameters("--left-right", "--count", "$parent...$branch")
         val result = Git.getInstance().runCommand(handler)
-        if (!result.success()) return 0 to 0
+        if (!result.success()) {
+            LOG.warn("BranchDetailService: aheadBehind('$branch', '$parent') failed: ${result.errorOutputAsJoinedString}")
+            return 0 to 0
+        }
         val parts = result.output.firstOrNull()?.trim()?.split('\t') ?: return 0 to 0
         val behind = parts.getOrNull(0)?.toIntOrNull() ?: 0
         val ahead  = parts.getOrNull(1)?.toIntOrNull() ?: 0
@@ -110,7 +119,10 @@ class BranchDetailService(private val project: Project) {
         val handler = GitLineHandler(project, repo.root, GitCommand.LOG)
         handler.addParameters("--oneline", "--max-count=50", range)
         val result = Git.getInstance().runCommand(handler)
-        if (!result.success()) return emptyList()
+        if (!result.success()) {
+            LOG.warn("BranchDetailService: commitLog('$branch', parent='$parent') failed: ${result.errorOutputAsJoinedString}")
+            return emptyList()
+        }
         return result.output.map { line ->
             val spaceIdx = line.indexOf(' ')
             if (spaceIdx > 0) CommitEntry(line.substring(0, spaceIdx), line.substring(spaceIdx + 1))

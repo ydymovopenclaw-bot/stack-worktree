@@ -4,6 +4,7 @@ import com.github.ydymovopenclawbot.stackworktree.git.AheadBehind
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.RebaseResult
 import com.github.ydymovopenclawbot.stackworktree.git.Worktree
+import com.github.ydymovopenclawbot.stackworktree.git.WorktreeCommandException
 import com.github.ydymovopenclawbot.stackworktree.state.BranchHealth
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.PluginState
@@ -996,7 +997,7 @@ class OpsLayerImplTest {
 
     @Test
     fun `syncAll - fetch failure returns empty result and shows error notification`() {
-        val git = FakeGitLayer(onFetch = { throw RuntimeException("network error") })
+        val git = FakeGitLayer(onFetch = { throw WorktreeCommandException("network error") })
         val ui  = FakeUiLayer()
         val result = makeOps(git, FakeStateStore(null), ui, FakeStateLayer(twoNodePluginState()))
             .syncAll()
@@ -1010,7 +1011,7 @@ class OpsLayerImplTest {
     @Test
     fun `syncAll - getMergedRemoteBranches failure returns empty result and shows error notification`() {
         val git = FakeGitLayer(
-            mergedBranchesProvider = { _, _ -> throw RuntimeException("remote unavailable") },
+            mergedBranchesProvider = { _, _ -> throw WorktreeCommandException("remote unavailable") },
         )
         val ui     = FakeUiLayer()
         val result = makeOps(git, FakeStateStore(null), ui, FakeStateLayer(twoNodePluginState()))

@@ -46,17 +46,20 @@ class StateStorage(
         // commit → tree SHA
         val commitText = exec("cat-file", "-p", REF).stdout
         val treeSha = commitText.lineSequence()
-            .first { it.startsWith("tree ") }
-            .removePrefix("tree ")
-            .trim()
+            .firstOrNull { it.startsWith("tree ") }
+            ?.removePrefix("tree ")
+            ?.trim()
+            ?: throw GitException("Corrupt stack state: expected 'tree <hash>' line in git commit object")
 
         // tree → blob SHA for state.json
         val treeText = exec("cat-file", "-p", treeSha).stdout
-        val blobSha = treeText.lineSequence()
-            .first { it.contains(BLOB_FILENAME) }
-            .trimStart()
+        val blobLine = treeText.lineSequence()
+            .firstOrNull { it.contains(BLOB_FILENAME) }
+            ?: throw GitException("Corrupt stack state: '$BLOB_FILENAME' not found in tree object")
+        val blobSha = blobLine.trimStart()
             // line format: "100644 blob <sha>  state.json" (two spaces before name)
-            .split("\\s+".toRegex())[2]
+            .split("\\s+".toRegex()).getOrNull(2)
+            ?: throw GitException("Corrupt stack state: unexpected tree entry format: $blobLine")
 
         val jsonStr = exec("cat-file", "blob", blobSha).stdout
         return JSON.decodeFromString<StackState>(jsonStr)

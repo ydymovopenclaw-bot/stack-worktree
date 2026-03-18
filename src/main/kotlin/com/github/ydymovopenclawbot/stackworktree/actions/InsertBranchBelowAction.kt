@@ -1,7 +1,10 @@
 package com.github.ydymovopenclawbot.stackworktree.actions
 
+import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -60,8 +63,26 @@ class InsertBranchBelowAction : AnAction() {
         object : Task.Backgroundable(project, "Inserting branch below '$targetBranch'…", true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = true
-                val ops: OpsLayer = OpsLayerImpl.forProject(project)
-                ops.insertBranchBelow(targetBranch, newBranchName)
+                try {
+                    val ops: OpsLayer = OpsLayerImpl.forProject(project)
+                    ops.insertBranchBelow(targetBranch, newBranchName)
+                } catch (ex: WorktreeException) {
+                    LOG.warn("InsertBranchBelowAction: failed", ex)
+                    notify("Insert branch below failed: ${ex.message}", NotificationType.ERROR)
+                } catch (ex: IllegalStateException) {
+                    LOG.warn("InsertBranchBelowAction: invalid state", ex)
+                    notify(ex.message ?: "Invalid state.", NotificationType.WARNING)
+                } catch (ex: Exception) {
+                    LOG.error("InsertBranchBelowAction: unexpected error", ex)
+                    notify("Unexpected error: ${ex.message}", NotificationType.ERROR)
+                }
+            }
+
+            private fun notify(message: String, type: NotificationType) {
+                NotificationGroupManager.getInstance()
+                    .getNotificationGroup("StackWorktree")
+                    .createNotification(message, type)
+                    .notify(project)
             }
         }.queue()
     }

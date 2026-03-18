@@ -150,13 +150,17 @@ class GitHubJsonParserTest {
     }
 
     @Test
-    fun `parseHeadSha returns empty string for missing head field`() {
-        assertEquals("", GitHubJsonParser.parseHeadSha("""{"number":1}"""))
+    fun `parseHeadSha throws for missing head field`() {
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            GitHubJsonParser.parseHeadSha("""{"number":1}""")
+        }
     }
 
     @Test
-    fun `parseHeadSha returns empty string for malformed json`() {
-        assertEquals("", GitHubJsonParser.parseHeadSha("not-json"))
+    fun `parseHeadSha throws for malformed json`() {
+        org.junit.jupiter.api.assertThrows<Exception> {
+            GitHubJsonParser.parseHeadSha("not-json")
+        }
     }
 
     // ── JSON builders ─────────────────────────────────────────────────────────

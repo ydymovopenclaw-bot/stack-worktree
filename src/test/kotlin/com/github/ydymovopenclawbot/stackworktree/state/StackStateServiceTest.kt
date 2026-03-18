@@ -86,6 +86,56 @@ class StackStateServiceTest {
         assertEquals(1, service.getAllParents().size)
     }
 
+    // ── updateWorktreePath / clearWorktreePath ──────────────────────────────
+
+    @Test
+    fun `updateWorktreePath stores path without affecting parent`() {
+        service.recordBranch("feature", "main", null)
+        service.updateWorktreePath("feature", "/tmp/wt")
+        assertEquals("/tmp/wt", service.getWorktreePath("feature"))
+        assertEquals("main", service.getParent("feature"))
+    }
+
+    @Test
+    fun `updateWorktreePath overwrites existing path`() {
+        service.recordBranch("feature", "main", "/old/path")
+        service.updateWorktreePath("feature", "/new/path")
+        assertEquals("/new/path", service.getWorktreePath("feature"))
+    }
+
+    @Test
+    fun `clearWorktreePath removes binding`() {
+        service.recordBranch("feature", "main", "/tmp/wt")
+        service.clearWorktreePath("feature")
+        assertNull(service.getWorktreePath("feature"))
+    }
+
+    @Test
+    fun `clearWorktreePath is no-op when no binding exists`() {
+        service.clearWorktreePath("nonexistent")
+        assertNull(service.getWorktreePath("nonexistent"))
+    }
+
+    // ── setWorktreeBasePath / getWorktreeBasePath ─────────────────────────────
+
+    @Test
+    fun `worktreeBasePath is null by default`() {
+        assertNull(service.getWorktreeBasePath())
+    }
+
+    @Test
+    fun `setWorktreeBasePath stores and returns path`() {
+        service.setWorktreeBasePath("/workspace/wt")
+        assertEquals("/workspace/wt", service.getWorktreeBasePath())
+    }
+
+    @Test
+    fun `setWorktreeBasePath overwrites previous value`() {
+        service.setWorktreeBasePath("/old")
+        service.setWorktreeBasePath("/new")
+        assertEquals("/new", service.getWorktreeBasePath())
+    }
+
     // ── Thread safety (smoke test) ────────────────────────────────────────────
 
     @Test
