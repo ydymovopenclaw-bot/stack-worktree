@@ -158,7 +158,7 @@ class GitHubJsonParserTest {
 
     @Test
     fun `parseHeadSha throws for malformed json`() {
-        org.junit.jupiter.api.assertThrows<Exception> {
+        org.junit.jupiter.api.assertThrows<kotlinx.serialization.SerializationException> {
             GitHubJsonParser.parseHeadSha("not-json")
         }
     }

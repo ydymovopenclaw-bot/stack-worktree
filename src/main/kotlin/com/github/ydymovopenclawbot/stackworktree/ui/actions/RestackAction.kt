@@ -1,5 +1,6 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.actions
 
+import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
 import com.intellij.icons.AllIcons
@@ -51,13 +52,23 @@ class RestackAction : AnAction(
                         indicator.text     = "Restacking branch $current/$total: $branchName"
                         indicator.fraction = current.toDouble() / total
                     }
-                } catch (ex: Exception) {
+                } catch (ex: WorktreeException) {
                     LOG.warn("RestackAction: restack failed", ex)
-                    NotificationGroupManager.getInstance()
-                        .getNotificationGroup("StackWorktree")
-                        .createNotification("Restack failed: ${ex.message}", NotificationType.ERROR)
-                        .notify(project)
+                    showNotification("Restack failed: ${ex.message}", NotificationType.ERROR)
+                } catch (ex: IllegalStateException) {
+                    LOG.warn("RestackAction: invalid state", ex)
+                    showNotification(ex.message ?: "Invalid state.", NotificationType.WARNING)
+                } catch (ex: Exception) {
+                    LOG.error("RestackAction: unexpected error", ex)
+                    showNotification("Unexpected error: ${ex.message}", NotificationType.ERROR)
                 }
+            }
+
+            private fun showNotification(message: String, type: NotificationType) {
+                NotificationGroupManager.getInstance()
+                    .getNotificationGroup("StackWorktree")
+                    .createNotification(message, type)
+                    .notify(project)
             }
         }.queue()
     }

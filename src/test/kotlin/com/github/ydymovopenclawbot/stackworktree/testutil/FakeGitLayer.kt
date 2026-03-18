@@ -8,9 +8,8 @@ import com.github.ydymovopenclawbot.stackworktree.git.Worktree
 /**
  * Shared [GitLayer] fake for unit tests.
  *
- * All methods have configurable responses; unset operations return safe defaults or throw
- * [UnsupportedOperationException] depending on the method (worktree ops are lenient,
- * branch ops are strict so that accidental calls are caught).
+ * All methods have configurable responses via public properties (lambdas or mutable maps).
+ * Unset operations return safe defaults (empty lists, zero counts, no-op).
  */
 open class FakeGitLayer(
     private val worktreeListResult: List<Worktree> = emptyList(),

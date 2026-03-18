@@ -10,8 +10,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Thread-safety: [calculate] and [invalidate] may be called concurrently from pooled
  * background threads (e.g. rapid Refresh button clicks or burst GIT_REPO_CHANGE events).
  * The backing store is a [ConcurrentHashMap] so individual reads and writes are atomic.
- * The read-then-write check-and-set in [calculate] is wrapped in [synchronized] to prevent
- * two threads from both seeing a stale entry and each issuing a redundant git call.
+ * Cache reads are synchronized; git I/O runs outside the lock to avoid blocking all
+ * callers when a git process is slow. This means two threads may redundantly compute
+ * the same branch, but the trade-off avoids thread starvation.
  *
  * @param gitLayer Low-level git operations provider.
  * @param ttlMs    How long a cached entry is considered fresh (milliseconds).
@@ -24,8 +25,8 @@ class AheadBehindCalculator(
 ) {
     private data class CachedEntry(val value: AheadBehind, val timestampMs: Long)
 
-    // ConcurrentHashMap for safe concurrent reads; synchronized blocks guard the
-    // read-then-write sequences to avoid duplicate git calls under contention.
+    // ConcurrentHashMap for safe concurrent reads; synchronized blocks guard
+    // cache lookups and writes, but git I/O runs outside the lock.
     private val cache = ConcurrentHashMap<String, CachedEntry>()
 
     /**

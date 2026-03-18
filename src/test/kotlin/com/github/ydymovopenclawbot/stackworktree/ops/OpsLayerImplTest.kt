@@ -923,6 +923,29 @@ class OpsLayerImplTest {
     }
 
     @Test
+    fun `syncAll - merged trunk-child with null parent splices children into trunk's child list`() {
+        // A has parent=null (direct trunk child), B is child of A.
+        // When A is merged, B should be re-parented to null and trunk's children updated.
+        val stackState = StackState(
+            repoConfig = RepoConfig(trunk = "main", remote = "origin"),
+            branches = mapOf(
+                "main" to BranchNode("main", parent = null, children = listOf("A")),
+                "A"    to BranchNode("A",    parent = null, children = listOf("B")),
+                "B"    to BranchNode("B",    parent = "A"),
+            ),
+        )
+        val git   = FakeGitLayer(mergedBranchesProvider = { _, _ -> setOf("A") })
+        val store = FakeStateStore(stackState)
+        makeOps(git, store).syncAll()
+
+        val saved = store.writeHistory.last()
+        assertTrue("A" !in saved.branches, "Merged branch A should be removed")
+        assertEquals(null, saved.branches["B"]?.parent, "B should be re-parented to null (trunk child)")
+        assertEquals(listOf("B"), saved.branches["main"]?.children,
+            "Trunk's children should contain B after A is removed")
+    }
+
+    @Test
     fun `syncAll - trunk is never treated as merged even if remote returns it`() {
         val git = FakeGitLayer(
             // Remote says "main" is merged — should be ignored

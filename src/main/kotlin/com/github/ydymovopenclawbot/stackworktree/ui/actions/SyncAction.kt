@@ -1,5 +1,6 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.actions
 
+import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayerImpl
 import com.intellij.icons.AllIcons
@@ -10,6 +11,7 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 
@@ -54,13 +56,25 @@ class SyncAction : AnAction(
                     // Update indicator text with a brief summary while the progress window
                     // is still visible; the notification balloon carries the full message.
                     indicator.text = result.summaryMessage()
-                } catch (ex: Exception) {
+                } catch (ex: ProcessCanceledException) {
+                    throw ex
+                } catch (ex: WorktreeException) {
                     LOG.warn("SyncAction: sync failed", ex)
-                    NotificationGroupManager.getInstance()
-                        .getNotificationGroup("StackWorktree")
-                        .createNotification("Sync failed: ${ex.message}", NotificationType.ERROR)
-                        .notify(project)
+                    showNotification("Sync failed: ${ex.message}", NotificationType.ERROR)
+                } catch (ex: IllegalStateException) {
+                    LOG.warn("SyncAction: invalid state", ex)
+                    showNotification(ex.message ?: "Invalid state.", NotificationType.WARNING)
+                } catch (ex: Exception) {
+                    LOG.error("SyncAction: unexpected error", ex)
+                    showNotification("Unexpected error: ${ex.message}", NotificationType.ERROR)
                 }
+            }
+
+            private fun showNotification(message: String, type: NotificationType) {
+                NotificationGroupManager.getInstance()
+                    .getNotificationGroup("StackWorktree")
+                    .createNotification(message, type)
+                    .notify(project)
             }
         }.queue()
     }

@@ -80,7 +80,11 @@ class GitHubProvider(private val project: Project) : PrProvider {
 
         // 1. Fetch PR to get the head SHA and PR details
         val prJson = execute(getRequest("$base/pulls/$prId", token)) { it }
-        val headSha = GitHubJsonParser.parseHeadSha(prJson)
+        val headSha = try {
+            GitHubJsonParser.parseHeadSha(prJson)
+        } catch (e: Exception) {
+            throw PrProviderException("Failed to extract head SHA from PR #$prId response: ${e.message}", e)
+        }
 
         // 2. Fetch check-runs and reviews sequentially (already on a pooled thread)
         val checkRunsJson = execute(getRequest("$base/commits/$headSha/check-runs", token)) { it }

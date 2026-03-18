@@ -57,7 +57,7 @@ class StateStorage(
             .firstOrNull { it.contains(BLOB_FILENAME) }
             ?: throw GitException("Corrupt stack state: '$BLOB_FILENAME' not found in tree object")
         val blobSha = blobLine.trimStart()
-            // line format: "100644 blob <sha>  state.json" (two spaces before name)
+            // line format: "100644 blob <sha>\tstate.json" (tab-separated fields)
             .split("\\s+".toRegex()).getOrNull(2)
             ?: throw GitException("Corrupt stack state: unexpected tree entry format: $blobLine")
 

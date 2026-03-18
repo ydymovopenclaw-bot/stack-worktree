@@ -181,14 +181,23 @@ class OpsLayerImpl(
 
         // ── 5. Persist ────────────────────────────────────────────────────────
         sl.save(updatedPluginState)
+        var stateWriteFailed = false
         if (updatedStackState != null) {
             runCatching { store.write(updatedStackState) }
-                .onFailure { LOG.warn("syncAll: failed to write StackState: ${it.message}") }
+                .onFailure {
+                    stateWriteFailed = true
+                    LOG.warn("syncAll: failed to write StackState: ${it.message}", it)
+                }
         }
 
         // ── 6. Notify & refresh ───────────────────────────────────────────────
         val result = SyncResult(mergedTracked, prunedWorktrees, branchStatuses)
-        ui.notify(result.summaryMessage())
+        val message = if (stateWriteFailed) {
+            result.summaryMessage() + " (warning: state persistence failed — changes may not survive restart)"
+        } else {
+            result.summaryMessage()
+        }
+        ui.notify(message)
         ui.refresh()
 
         LOG.info(
