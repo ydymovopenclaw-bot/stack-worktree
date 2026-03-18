@@ -8,6 +8,9 @@ import com.github.ydymovopenclawbot.stackworktree.git.Worktree
 import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.ops.WorktreeOps
+import com.github.ydymovopenclawbot.stackworktree.pr.BranchProvider
+import com.github.ydymovopenclawbot.stackworktree.pr.PrLayer
+import com.github.ydymovopenclawbot.stackworktree.pr.PrStatusPoller
 import com.github.ydymovopenclawbot.stackworktree.startup.StackGitChangeListener
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.PluginState
@@ -25,6 +28,13 @@ import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
 import com.github.ydymovopenclawbot.stackworktree.actions.OpenInNewWindowAction
 import com.github.ydymovopenclawbot.stackworktree.actions.OpenInTerminalAction
 import com.github.ydymovopenclawbot.stackworktree.actions.StackDataKeys
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionManager
@@ -107,6 +117,15 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     private var detailPanel: BranchDetailPanel? = null
     private var worktreeListPanel: WorktreeListPanel? = null
     private var connection: MessageBusConnection? = null
+
+    /**
+     * Coroutine scope that owns the PR status poller and the badge-update collector.
+     * Created in [initContent] and cancelled in [disposeContent].
+     */
+    private var pollerScope: CoroutineScope? = null
+
+    /** Background poller for PR/CI badge data. Null until [initContent] is called. */
+    private var prStatusPoller: PrStatusPoller? = null
 
     /**
      * Last-known list of worktrees, updated on the EDT in [performRefresh].
@@ -226,7 +245,40 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             )
         }
 
-        val toolbar = StackTreeToolbar.create("StacksTab") { performRefresh() }
+        // ── PR status poller ──────────────────────────────────────────────────
+        //
+        // The poller fetches PR/CI status periodically and exposes a StateFlow that
+        // the refresh pipeline reads to populate StackNodeData.prStatus.  The scope
+        // is cancelled in disposeContent() when the tab is closed/hidden.
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        pollerScope = scope
+
+        val stateLayerForPoller = project.service<StateLayer>()
+        val poller = PrStatusPoller(
+            scope          = scope,
+            prLayer        = project.service<PrLayer>(),
+            branchProvider = BranchProvider {
+                stateLayerForPoller.load().trackedBranches.keys.toList()
+            },
+        )
+        prStatusPoller = poller
+        poller.start()
+        poller.setTabVisible(true)
+
+        // Re-render the graph whenever the poller publishes new badge data.
+        // drop(1) skips the initial empty snapshot so we don't double-refresh on startup
+        // (performRefresh() is already called explicitly below).
+        scope.launch {
+            poller.badges.drop(1).collect {
+                performRefresh()
+            }
+        }
+
+        // Manual refresh triggers both a graph refresh and an immediate PR poll.
+        val toolbar = StackTreeToolbar.create("StacksTab") {
+            performRefresh()
+            poller.refreshNow()
+        }
         toolbar.targetComponent = graph
 
         // Worktree list — clicking a tracked row selects its node in the graph;
@@ -281,6 +333,11 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     }
 
     override fun disposeContent() {
+        prStatusPoller?.setTabVisible(false)
+        prStatusPoller?.dispose()
+        prStatusPoller  = null
+        pollerScope?.cancel()
+        pollerScope     = null
         connection?.disconnect()
         connection       = null
         graphPanel       = null
@@ -346,6 +403,10 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     h.gitLayer.getMergedRemoteBranches(remote, trunk)
                 }.getOrDefault(emptySet())
 
+                // Snapshot the latest PR/CI badge data — read once outside the loop so all
+                // nodes in this cycle see a consistent view of the poller's StateFlow.
+                val prStatuses = prStatusPoller?.badges?.value?.statuses ?: emptyMap()
+
                 // Build StackGraphData for the visual panel.
                 val nodes: List<StackNodeData> = state?.branches?.values?.map { branchNode ->
                     val ab     = aheadBehind[branchNode.name]
@@ -364,6 +425,7 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                         healthStatus    = health,
                         isCurrentBranch = branchNode.name == currentBranch,
                         hasWorktree     = branchNode.worktreePath != null,
+                        prStatus        = prStatuses[branchNode.name],
                     )
                 } ?: emptyList()
 

@@ -5,6 +5,8 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.github.ydymovopenclawbot.stackworktree.pr.ChecksState
+import com.github.ydymovopenclawbot.stackworktree.pr.ReviewState
 
 /**
  * Default [PrLayer] implementation that delegates all host operations to the active
@@ -25,6 +27,17 @@ class DefaultPrLayer(private val project: Project) : PrLayer {
         } catch (e: PrProviderException) {
             LOG.warn("Failed to look up PR for branch '$branch': ${e.message}")
             null
+        }
+    }
+
+    override fun getPrStatus(branch: String): PrStatus? {
+        val pr = findPr(branch) ?: return null
+        return try {
+            provider.getPrStatus(pr.number)
+        } catch (e: PrProviderException) {
+            LOG.warn("Failed to get PR status for branch '$branch' (PR #${pr.number}): ${e.message}")
+            // Degrade gracefully: return the PR info we already have with no CI/review data
+            PrStatus(prInfo = pr, checksState = ChecksState.NONE, reviewState = ReviewState.NONE)
         }
     }
 

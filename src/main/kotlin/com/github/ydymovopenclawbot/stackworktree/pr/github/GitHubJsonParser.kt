@@ -44,13 +44,14 @@ object GitHubJsonParser {
         val url = obj["html_url"]!!.jsonPrimitive.content
         val apiState = obj["state"]!!.jsonPrimitive.content       // "open" | "closed"
         val merged = obj["merged"]?.jsonPrimitive?.boolean ?: false
+        val isDraft = obj["draft"]?.jsonPrimitive?.boolean ?: false
 
         val prState = when {
             merged -> PrState.MERGED
             apiState == "open" -> PrState.OPEN
             else -> PrState.CLOSED
         }
-        return PrInfo(number = number, title = title, url = url, state = prState)
+        return PrInfo(number = number, title = title, url = url, state = prState, isDraft = isDraft)
     }
 
     // ── Check runs ────────────────────────────────────────────────────────────

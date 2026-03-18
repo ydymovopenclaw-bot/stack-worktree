@@ -56,7 +56,10 @@ object GitLabJsonParser {
                 "closed" -> PrState.CLOSED
                 else -> PrState.OPEN   // "opened", "locked", or unknown → treat as open
             }
-            return PrInfo(number = iid, title = title, url = url, state = prState)
+            // GitLab exposes a boolean "draft" field on MR objects (added in GitLab 14.x).
+            // Older GitLab instances do not include the field; fall back to false.
+            val isDraft = obj["draft"]?.jsonPrimitive?.boolean ?: false
+            return PrInfo(number = iid, title = title, url = url, state = prState, isDraft = isDraft)
         } catch (e: PrProviderException) {
             throw e
         } catch (e: Exception) {
