@@ -427,6 +427,13 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
      * Converts [PluginState.trackedBranches] into a [StackState] suitable for the graph
      * renderer.  Fields not tracked by [StateLayer] (PR info, health, worktree path) are
      * left at their defaults; ahead/behind is computed separately by [AheadBehindCalculator].
+     *
+     * TODO(S5.x): [TrackedBranchNode] has no `health` field, so [BranchNode.health] is always
+     *  [com.github.ydymovopenclawbot.stackworktree.state.BranchHealth.CLEAN] for nodes produced
+     *  by this path. As a result, [com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.HealthStatus.CONFLICT]
+     *  is unreachable when [PluginState.trackedBranches] is non-empty (the common case after
+     *  track/untrack operations). Fix: add a `health` field to [TrackedBranchNode] and propagate
+     *  it here, or persist conflict state via the StateStorage / BranchNode path instead.
      */
     private fun synthesizeStackState(pluginState: PluginState): StackState {
         val trunk = pluginState.trunkBranch ?: "main"

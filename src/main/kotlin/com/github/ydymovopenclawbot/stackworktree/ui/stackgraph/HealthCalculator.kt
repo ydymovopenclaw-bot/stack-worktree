@@ -26,6 +26,11 @@ object HealthCalculator {
     /**
      * Computes health for every branch in [branches].
      *
+     * Marked `internal`: [computeSingle] is the sole production entry point
+     * (called node-by-node in [com.github.ydymovopenclawbot.stackworktree.ui.StacksTabFactory]).
+     * This overload exists for tests that exercise the full-map path; it should
+     * be promoted to `public` if a batch call site is added in production code.
+     *
      * @param branches       Branch nodes keyed by branch name (from [StackState.branches]).
      * @param aheadBehind    Ahead/behind counts keyed by branch name; entries may be absent
      *                       (treated as if both counters are zero).
@@ -34,7 +39,7 @@ object HealthCalculator {
      *                       a preceding fetch so the result reflects the last-known remote state.
      * @return Map of branch name → [HealthStatus] for every entry in [branches].
      */
-    fun compute(
+    internal fun compute(
         branches: Map<String, BranchNode>,
         aheadBehind: Map<String, AheadBehind> = emptyMap(),
         mergedBranches: Set<String> = emptySet(),

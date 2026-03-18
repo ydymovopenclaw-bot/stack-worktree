@@ -42,7 +42,15 @@ object StackGraphColors {
     // ------------------------------------------------------------------
 
     val STATUS_CLEAN: JBColor = JBColor(Color(0x34A853), Color(0x4CAF82))
-    val STATUS_DIRTY: JBColor = JBColor(Color(0xFBBC04), Color(0xE6A817))
+    /**
+     * Muted orange — branch has uncommitted local changes.
+     *
+     * Intentionally distinct from [STATUS_STALE] (amber) so users can visually
+     * distinguish "dirty working tree" from "behind parent". Currently excluded
+     * from the automatic health pipeline (which never performs a working-tree
+     * scan); reserved for future use.
+     */
+    val STATUS_DIRTY: JBColor = JBColor(Color(0xF57C00), Color(0xBF6010))
     val STATUS_CONFLICT: JBColor = JBColor(Color(0xEA4335), Color(0xFF6B6B))
     /** Amber — branch is behind its parent and needs a rebase. */
     val STATUS_STALE: JBColor = JBColor(Color(0xFBBC04), Color(0xE6A817))
