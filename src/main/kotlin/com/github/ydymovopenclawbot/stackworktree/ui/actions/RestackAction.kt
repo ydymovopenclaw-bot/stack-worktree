@@ -37,7 +37,7 @@ class RestackAction : AnAction(
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
 
-        object : Task.Backgroundable(project, "Restacking all branches\u2026", /* canBeCancelled */ true) {
+        object : Task.Backgroundable(project, "Restacking all branches\u2026", /* canBeCancelled */ false) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = false
                 val ops: OpsLayer = OpsLayerImpl.forProject(project)

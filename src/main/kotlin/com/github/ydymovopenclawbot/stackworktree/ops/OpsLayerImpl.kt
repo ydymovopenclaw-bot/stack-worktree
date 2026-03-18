@@ -283,8 +283,11 @@ class OpsLayerImpl(
             when (val r = git.rebaseOnto(branch, parentName, oldParentTip)) {
                 is RebaseResult.Success -> {
                     rebasedCount++
-                    updatedBranches[branch] = updatedBranches[branch]!!
-                        .copy(baseCommit = git.resolveCommit(parentName))
+                    val existingNode = updatedBranches[branch] ?: run {
+                        LOG.warn("restackAll: '$branch' missing from branches map after rebase — skipping update")
+                        continue
+                    }
+                    updatedBranches[branch] = existingNode.copy(baseCommit = git.resolveCommit(parentName))
                 }
                 is RebaseResult.Aborted -> {
                     LOG.warn("restackAll: aborted at '$branch' [${i + 1}/$total]. Reason: ${r.reason}")
@@ -298,6 +301,7 @@ class OpsLayerImpl(
 
         store.write(state.copy(branches = updatedBranches))
         uiLayer().refresh()
+        uiLayer().notify("Restacked $rebasedCount branch${if (rebasedCount == 1) "" else "es"} successfully")
         LOG.info("restackAll: done — rebased $rebasedCount/$total branches")
         return RestackResult.Success(rebasedCount)
     }
