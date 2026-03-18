@@ -34,6 +34,11 @@
                     text="Insert Branch Below"
                     description="Insert a new branch as a child of this branch and re-parent all existing children to it"/>
             <separator/>
+            <action id="StackWorktree.RebaseOntoParent"
+                    class="com.github.ydymovopenclawbot.stackworktree.actions.RebaseOntoParentAction"
+                    text="Rebase onto Parent"
+                    description="Rebase this branch onto its parent branch in the stack; opens IntelliJ's merge dialog on conflicts"/>
+            <separator/>
             <action id="StackWorktree.CreateWorktree"
                     class="com.github.ydymovopenclawbot.stackworktree.actions.CreateWorktreeAction"
                     text="Create Worktree"

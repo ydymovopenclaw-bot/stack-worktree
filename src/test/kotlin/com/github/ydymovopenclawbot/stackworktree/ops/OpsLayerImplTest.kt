@@ -4,12 +4,14 @@ import com.github.ydymovopenclawbot.stackworktree.git.AheadBehind
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.RebaseResult
 import com.github.ydymovopenclawbot.stackworktree.git.Worktree
+import com.github.ydymovopenclawbot.stackworktree.state.BranchHealth
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.PluginState
 import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
 import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackStateStore
 import com.github.ydymovopenclawbot.stackworktree.state.TrackedBranchNode
+import com.github.ydymovopenclawbot.stackworktree.ui.UiLayer
 import com.intellij.openapi.project.Project
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -271,6 +273,14 @@ class OpsLayerImplTest {
         override fun write(state: StackState) { stored = state; writeHistory += state }
     }
 
+    private class FakeUiLayer : UiLayer {
+        val notifications = mutableListOf<String>()
+        var refreshCount  = 0
+
+        override fun refresh() { refreshCount++ }
+        override fun notify(message: String) { notifications += message }
+    }
+
     private val noProject: Project = Proxy.newProxyInstance(
         Project::class.java.classLoader,
         arrayOf(Project::class.java),
@@ -278,8 +288,11 @@ class OpsLayerImplTest {
         throw UnsupportedOperationException("Unexpected call to Project.${method.name} in unit test")
     } as Project
 
-    private fun makeOps(git: FakeGitLayer, store: FakeStateStore) =
-        OpsLayerImpl(noProject, git, store)
+    private fun makeOps(
+        git:   FakeGitLayer,
+        store: FakeStateStore,
+        ui:    FakeUiLayer = FakeUiLayer(),
+    ) = OpsLayerImpl(noProject, git, store, ui)
 
     private fun linearState() = StackState(
         repoConfig = RepoConfig(trunk = "main", remote = "origin"),
@@ -501,5 +514,98 @@ class OpsLayerImplTest {
             makeOps(git, FakeStateStore(linearState())).insertBranchBelow("feat", "after-feat")
         }
         assertTrue("after-feat" in ex.message!!)
+    }
+
+    // ── rebaseOntoParent ──────────────────────────────────────────────────────
+
+    @Test
+    fun `rebaseOntoParent - calls rebaseOnto with parent as both newBase and upstream`() {
+        val git = FakeGitLayer(branchShas = mutableMapOf("main" to "sha-main", "feat" to "sha-feat"))
+        makeOps(git, FakeStateStore(linearState())).rebaseOntoParent("feat")
+
+        assertEquals(1, git.rebaseCalls.size)
+        val (branch, newBase, upstream) = git.rebaseCalls.single()
+        assertEquals("feat", branch)
+        assertEquals("main", newBase)
+        assertEquals("main", upstream)
+    }
+
+    @Test
+    fun `rebaseOntoParent - updates baseCommit to parent tip on success`() {
+        val parentTip = "sha-main-tip"
+        val git   = FakeGitLayer(branchShas = mutableMapOf("main" to parentTip, "feat" to "sha-feat"))
+        val store = FakeStateStore(linearState())
+        makeOps(git, store).rebaseOntoParent("feat")
+
+        val saved = store.writeHistory.single()
+        assertEquals(parentTip, saved.branches["feat"]!!.baseCommit)
+    }
+
+    @Test
+    fun `rebaseOntoParent - sets health to CLEAN on success`() {
+        val git   = FakeGitLayer(branchShas = mutableMapOf("main" to "sha-main", "feat" to "sha-feat"))
+        val store = FakeStateStore(
+            linearState().let { s ->
+                // Start with NEEDS_REBASE to verify it flips to CLEAN.
+                s.copy(branches = s.branches + ("feat" to s.branches["feat"]!!.copy(health = BranchHealth.NEEDS_REBASE)))
+            }
+        )
+        makeOps(git, store).rebaseOntoParent("feat")
+
+        assertEquals(BranchHealth.CLEAN, store.writeHistory.single().branches["feat"]!!.health)
+    }
+
+    @Test
+    fun `rebaseOntoParent - emits success notification and triggers refresh`() {
+        val git = FakeGitLayer(branchShas = mutableMapOf("main" to "sha-main", "feat" to "sha-feat"))
+        val ui  = FakeUiLayer()
+        makeOps(git, FakeStateStore(linearState()), ui).rebaseOntoParent("feat")
+
+        assertEquals(1, ui.notifications.size)
+        assertTrue(ui.notifications.single().contains("feat"))
+        assertEquals(1, ui.refreshCount)
+    }
+
+    @Test
+    fun `rebaseOntoParent - writes no state and shows no notification on abort`() {
+        val git = FakeGitLayer(
+            branchShas = mutableMapOf("main" to "sha-main", "feat" to "sha-feat"),
+            rebaseResultProvider = { _, _, _ -> RebaseResult.Aborted("conflict") },
+        )
+        val store = FakeStateStore(linearState())
+        val ui    = FakeUiLayer()
+        makeOps(git, store, ui).rebaseOntoParent("feat")
+
+        assertTrue(store.writeHistory.isEmpty(), "No state written on abort")
+        assertTrue(ui.notifications.isEmpty(),   "No notification on abort")
+        assertEquals(0, ui.refreshCount,          "No refresh on abort")
+    }
+
+    @Test
+    fun `rebaseOntoParent - throws IllegalStateException when branch is not tracked`() {
+        val git = FakeGitLayer()
+        assertThrows<IllegalStateException> {
+            makeOps(git, FakeStateStore(linearState())).rebaseOntoParent("unknown-branch")
+        }
+    }
+
+    @Test
+    fun `rebaseOntoParent - throws IllegalStateException when branch has no parent (trunk)`() {
+        val git   = FakeGitLayer(branchShas = mutableMapOf("main" to "sha-main"))
+        assertThrows<IllegalStateException> {
+            makeOps(git, FakeStateStore(linearState())).rebaseOntoParent("main")
+        }
+    }
+
+    @Test
+    fun `rebaseOntoParent - preserves all other branches in state on success`() {
+        val git   = FakeGitLayer(branchShas = mutableMapOf("main" to "sha-main", "feat" to "sha-feat", "fix" to "sha-fix"))
+        val store = FakeStateStore(chainState())
+        makeOps(git, store).rebaseOntoParent("feat")
+
+        val saved = store.writeHistory.single()
+        // "main" and "fix" nodes must be untouched
+        assertEquals(chainState().branches["main"], saved.branches["main"])
+        assertEquals(chainState().branches["fix"],  saved.branches["fix"])
     }
 }

@@ -4,6 +4,7 @@ import com.github.ydymovopenclawbot.stackworktree.git.GitLayer
 import com.github.ydymovopenclawbot.stackworktree.git.GitLayerImpl
 import com.github.ydymovopenclawbot.stackworktree.git.ProcessGitRunner
 import com.github.ydymovopenclawbot.stackworktree.git.RebaseResult
+import com.github.ydymovopenclawbot.stackworktree.state.BranchHealth
 import com.github.ydymovopenclawbot.stackworktree.state.BranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.PluginState
 import com.github.ydymovopenclawbot.stackworktree.state.RepoConfig
@@ -13,6 +14,7 @@ import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
 import com.github.ydymovopenclawbot.stackworktree.state.TrackedBranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
 import com.github.ydymovopenclawbot.stackworktree.ui.STACK_STATE_TOPIC
+import com.github.ydymovopenclawbot.stackworktree.ui.UiLayer
 import com.github.ydymovopenclawbot.stackworktree.ui.stackgraph.StackNodeData
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -37,6 +39,7 @@ class OpsLayerImpl(
     private val project: Project,
     private val gitLayerOverride: GitLayer? = null,
     private val stateStoreOverride: StackStateStore? = null,
+    private val uiLayerOverride: UiLayer? = null,
 ) : OpsLayer {
 
     companion object {
@@ -46,6 +49,8 @@ class OpsLayerImpl(
     private val state get() = project.service<StateLayer>()
 
     private fun gitLayer(): GitLayer = gitLayerOverride ?: GitLayerImpl(project)
+
+    private fun uiLayer(): UiLayer = uiLayerOverride ?: project.service<UiLayer>()
 
     private fun stateStore(): StackStateStore = stateStoreOverride ?: run {
         val root = repoRoot()
@@ -201,6 +206,48 @@ class OpsLayerImpl(
     override fun untrackBranch(branch: String) {
         state.save(Algorithms.applyUntrackBranch(state.load(), branch))
         notifyStateChanged()
+    }
+
+    override fun rebaseOntoParent(branch: String) {
+        val git   = gitLayer()
+        val store = stateStore()
+        val ui    = uiLayer()
+
+        val currentState = store.read()
+            ?: error("No stack state found for project '${project.name}'")
+        val branchNode = currentState.branches[branch]
+            ?: error("Branch '$branch' is not tracked in the stack state")
+        val parent = branchNode.parent
+            ?: error("Branch '$branch' has no parent — it is the root of the stack")
+
+        LOG.info("rebaseOntoParent: rebasing '$branch' onto '$parent'")
+
+        val result = try {
+            git.rebaseOnto(branch, parent, parent)
+        } catch (e: Exception) {
+            LOG.warn("rebaseOntoParent: git rebase of '$branch' onto '$parent' failed: ${e.message}", e)
+            ui.notify("Rebase of '$branch' onto '$parent' failed: ${e.message}")
+            return
+        }
+
+        when (result) {
+            is RebaseResult.Success -> {
+                // After a clean rebase onto parent, merge-base = tip of parent.
+                val newBaseCommit = git.resolveCommit(parent)
+                val updatedNode = branchNode.copy(
+                    baseCommit = newBaseCommit,
+                    health     = BranchHealth.CLEAN,
+                )
+                store.write(currentState.copy(branches = currentState.branches + (branch to updatedNode)))
+                LOG.info("rebaseOntoParent: '$branch' successfully rebased onto '$parent'; baseCommit=$newBaseCommit")
+                ui.notify("Rebased '$branch' onto '$parent' successfully")
+                ui.refresh()
+            }
+            is RebaseResult.Aborted -> {
+                // Repository left in pre-rebase state; no state written.
+                LOG.info("rebaseOntoParent: rebase of '$branch' aborted. Reason: ${result.reason}")
+            }
+        }
     }
 
     private fun notifyStateChanged() {
