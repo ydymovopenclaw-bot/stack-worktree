@@ -84,6 +84,16 @@
         <applicationService
             serviceImplementation="com.github.ydymovopenclawbot.stackworktree.pr.gitlab.GitLabTokenStore"/>
 
+        <!-- S7.1: Settings service + configurable -->
+        <projectService
+            serviceImplementation="com.github.ydymovopenclawbot.stackworktree.settings.StackTreeSettingsService"/>
+        <projectConfigurable
+            parentId="vcs"
+            instance="com.github.ydymovopenclawbot.stackworktree.settings.StackTreeConfigurable"
+            id="com.github.ydymovopenclawbot.stackworktree.settings.StackTreeConfigurable"
+            displayName="StackTree"
+            nonDefaultProject="true"/>
+
         <!-- State / Git / Ops / UI layer project services (S3.3) -->
         <projectService
             serviceInterface="com.github.ydymovopenclawbot.stackworktree.state.StateLayer"
