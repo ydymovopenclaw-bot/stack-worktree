@@ -101,4 +101,26 @@ interface OpsLayer {
      * @throws IllegalArgumentException if [branch] is not currently tracked.
      */
     fun untrackBranch(branch: String)
+
+    /**
+     * Rebases [branch] onto its tracked parent branch (simple `git rebase <parent> <branch>`).
+     *
+     * Uses [git4idea.rebase.GitRebaser] so that conflicts open IntelliJ's three-pane
+     * merge dialog automatically. The caller blocks until the rebase completes, the user
+     * resolves all conflicts and continues, or the user aborts.
+     *
+     * After a successful rebase:
+     * - [com.github.ydymovopenclawbot.stackworktree.state.BranchNode.baseCommit] is updated to the
+     *   new merge-base (= current tip of parent).
+     * - [com.github.ydymovopenclawbot.stackworktree.state.BranchNode.health] is set to
+     *   [com.github.ydymovopenclawbot.stackworktree.state.BranchHealth.CLEAN].
+     * - A success notification balloon is shown.
+     * - The UI stack graph is refreshed.
+     *
+     * On abort (user dismisses merge dialog): the repository is left in its original
+     * pre-rebase state and no state is written.
+     *
+     * @throws IllegalStateException if [branch] is not tracked or has no parent.
+     */
+    fun rebaseOntoParent(branch: String)
 }
