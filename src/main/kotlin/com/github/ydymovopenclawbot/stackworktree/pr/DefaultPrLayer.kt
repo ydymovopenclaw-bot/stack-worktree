@@ -28,6 +28,20 @@ class DefaultPrLayer(private val project: Project) : PrLayer {
         }
     }
 
+    override fun getPrStatus(branch: String): PrStatus? {
+        // TODO: This makes two sequential network calls (findPr + getPrStatus).
+        //  Consider adding PrProvider.getPrStatusByBranch(branch) to merge them into one
+        //  round-trip, especially when polling across many branches.
+        val pr = findPr(branch) ?: return null
+        return try {
+            provider.getPrStatus(pr.number)
+        } catch (e: PrProviderException) {
+            LOG.warn("Failed to get PR status for branch '$branch' (PR #${pr.number}): ${e.message}")
+            // Degrade gracefully: return the PR info we already have with no CI/review data
+            PrStatus(prInfo = pr, checksState = ChecksState.NONE, reviewState = ReviewState.NONE)
+        }
+    }
+
     override fun openPr(branch: String) {
         val pr = findPr(branch) ?: run {
             LOG.info("openPr: no PR found for branch '$branch'")

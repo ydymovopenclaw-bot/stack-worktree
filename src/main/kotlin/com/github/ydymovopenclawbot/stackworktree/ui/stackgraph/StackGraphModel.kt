@@ -1,5 +1,7 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.stackgraph
 
+import com.github.ydymovopenclawbot.stackworktree.pr.PrStatus
+
 /**
  * Domain model for the stack graph UI.
  *
@@ -37,6 +39,9 @@ enum class HealthStatus {
  * @param isCurrentBranch Whether this node represents the currently checked-out branch.
  * @param hasWorktree    Whether a linked worktree is bound to this branch; renders a
  *                       folder-badge indicator in the graph node when `true`.
+ * @param prStatus       Live PR and CI status for this branch, or `null` when no open PR
+ *                       exists or the poller has not yet fetched data.  When non-null,
+ *                       the graph node renders a PR state badge and a CI dot.
  */
 data class StackNodeData(
     val id: String,
@@ -47,6 +52,7 @@ data class StackNodeData(
     val healthStatus: HealthStatus = HealthStatus.CLEAN,
     val isCurrentBranch: Boolean = false,
     val hasWorktree: Boolean = false,
+    val prStatus: PrStatus? = null,
 )
 
 /**

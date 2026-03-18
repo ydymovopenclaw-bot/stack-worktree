@@ -87,6 +87,38 @@ object StackGraphColors {
     val CURRENT_BRANCH_DOT: JBColor = JBColor(Color(0x4285F4), Color(0x6EA6FF))
 
     // ------------------------------------------------------------------
+    // PR state badge colours
+    // ------------------------------------------------------------------
+
+    /** Open PR — blue. */
+    val BADGE_PR_OPEN_BG: JBColor   = JBColor(Color(0xE8F0FE), Color(0x1C2C5B))
+    val BADGE_PR_OPEN_TEXT: JBColor = JBColor(Color(0x1A73E8), Color(0x8AB4F8))
+
+    /** Draft PR — gray. */
+    val BADGE_PR_DRAFT_BG: JBColor   = JBColor(Color(0xF1F3F4), Color(0x3A3A3A))
+    val BADGE_PR_DRAFT_TEXT: JBColor = JBColor(Color(0x80868B), Color(0x9AA0A6))
+
+    /** Approved PR — green. */
+    val BADGE_PR_APPROVED_BG: JBColor   = JBColor(Color(0xE6F4EA), Color(0x1E3A26))
+    val BADGE_PR_APPROVED_TEXT: JBColor = JBColor(Color(0x137333), Color(0x81C995))
+
+    /** Changes requested — red. */
+    val BADGE_PR_CHANGES_BG: JBColor   = JBColor(Color(0xFCE8E6), Color(0x3A1E1E))
+    val BADGE_PR_CHANGES_TEXT: JBColor = JBColor(Color(0xC5221F), Color(0xF28B82))
+
+    /** Merged PR — purple. */
+    val BADGE_PR_MERGED_BG: JBColor   = JBColor(Color(0xF3E8FD), Color(0x2A1A3E))
+    val BADGE_PR_MERGED_TEXT: JBColor = JBColor(Color(0x8E44AD), Color(0xB06FCF))
+
+    // ------------------------------------------------------------------
+    // CI dot colours (small filled circle)
+    // ------------------------------------------------------------------
+
+    val CI_PASSING: JBColor = JBColor(Color(0x34A853), Color(0x4CAF82))
+    val CI_FAILING: JBColor = JBColor(Color(0xEA4335), Color(0xFF6B6B))
+    val CI_PENDING: JBColor = JBColor(Color(0xFBBC04), Color(0xE6A817))
+
+    // ------------------------------------------------------------------
     // Helper
     // ------------------------------------------------------------------
 

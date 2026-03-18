@@ -1,5 +1,9 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.stackgraph
 
+import com.github.ydymovopenclawbot.stackworktree.pr.ChecksState
+import com.github.ydymovopenclawbot.stackworktree.pr.PrState
+import com.github.ydymovopenclawbot.stackworktree.pr.PrStatus
+import com.github.ydymovopenclawbot.stackworktree.pr.ReviewState
 import com.intellij.util.ui.JBUI
 import java.awt.BasicStroke
 import java.awt.Dimension
@@ -271,18 +275,21 @@ class StackGraphPanel : JPanel() {
         g2.font  = labelFont
         g2.color = StackGraphColors.NODE_TEXT
 
-        val fm             = g2.getFontMetrics(labelFont)
+        val fm              = g2.getFontMetrics(labelFont)
         val aheadBehindArea = if (node.ahead > 0 || node.behind > 0) 60 else 0
         val worktreeArea    = if (node.hasWorktree) 26 else 0
-        val badgeArea       = aheadBehindArea + worktreeArea
+        val prBadgeArea     = if (node.prStatus != null) 30 else 0
+        val ciDotArea       = if (node.prStatus?.checksState != null &&
+                                  node.prStatus.checksState != ChecksState.NONE) 14 else 0
+        val badgeArea       = aheadBehindArea + worktreeArea + prBadgeArea + ciDotArea
         val maxLabelW = (rect.width - (textStartX - rect.x) - 10 - badgeArea).toInt()
         val label     = truncate(node.branchName, fm, maxLabelW)
 
         val labelY = (rect.y + (rect.height + fm.ascent - fm.descent) / 2).toInt()
         g2.drawString(label, textStartX.toInt(), labelY)
 
-        // Right-side badges (behind, ahead, worktree) — painted right-to-left
-        val hasBadges = node.ahead > 0 || node.behind > 0 || node.hasWorktree
+        // Right-side badges (behind, ahead, worktree, PR state, CI dot) — painted right-to-left
+        val hasBadges = node.ahead > 0 || node.behind > 0 || node.hasWorktree || node.prStatus != null
         if (hasBadges) {
             var badgeX = (rect.maxX - 8).toInt()
             val badgeFont = JBUI.Fonts.label(10f).deriveFont(Font.BOLD)
@@ -302,8 +309,20 @@ class StackGraphPanel : JPanel() {
             }
             if (node.hasWorktree) {
                 // "W" badge — indicates a linked git worktree is bound to this branch
-                paintBadge(g2, bfm, "W", badgeX, badgeCy.toInt(),
+                badgeX = paintBadge(g2, bfm, "W", badgeX, badgeCy.toInt(),
                     StackGraphColors.BADGE_WORKTREE_BG, StackGraphColors.BADGE_WORKTREE_TEXT)
+                badgeX -= 4
+            }
+
+            // PR state badge — rightmost of the left-side group; painted after worktree
+            node.prStatus?.let { status ->
+                badgeX = paintPrBadge(g2, bfm, status, badgeX, badgeCy.toInt())
+                badgeX -= 4
+
+                // CI dot — small circle to the left of the PR badge
+                if (status.checksState != ChecksState.NONE) {
+                    badgeX = paintCiDot(g2, status.checksState, badgeX, badgeCy.toInt())
+                }
             }
         }
     }
@@ -354,6 +373,72 @@ class StackGraphPanel : JPanel() {
         selectedNodeId = id
         repaint()
         onNodeSelected?.invoke(node)
+    }
+
+    // ------------------------------------------------------------------
+    // PR badge helpers
+    // ------------------------------------------------------------------
+
+    /**
+     * Draws a PR state badge and returns the x coordinate immediately to the left of it.
+     *
+     * The badge text and colours are chosen based on the combined PR state and review decision:
+     * - Merged  → "M"  purple
+     * - Draft   → "D"  gray
+     * - Approved → "✓" green
+     * - Changes requested → "✗" red
+     * - Open (no review yet) → "PR" blue
+     */
+    private fun paintPrBadge(
+        g2: Graphics2D,
+        fm: java.awt.FontMetrics,
+        status: PrStatus,
+        rightX: Int,
+        centerY: Int,
+    ): Int {
+        val (text, bg, fg) = when {
+            status.prInfo.state == PrState.MERGED ->
+                Triple("M", StackGraphColors.BADGE_PR_MERGED_BG, StackGraphColors.BADGE_PR_MERGED_TEXT)
+            status.prInfo.isDraft ->
+                Triple("D", StackGraphColors.BADGE_PR_DRAFT_BG, StackGraphColors.BADGE_PR_DRAFT_TEXT)
+            status.reviewState == ReviewState.APPROVED ->
+                Triple("✓", StackGraphColors.BADGE_PR_APPROVED_BG, StackGraphColors.BADGE_PR_APPROVED_TEXT)
+            status.reviewState == ReviewState.CHANGES_REQUESTED ->
+                Triple("✗", StackGraphColors.BADGE_PR_CHANGES_BG, StackGraphColors.BADGE_PR_CHANGES_TEXT)
+            else ->
+                Triple("PR", StackGraphColors.BADGE_PR_OPEN_BG, StackGraphColors.BADGE_PR_OPEN_TEXT)
+        }
+        return paintBadge(g2, fm, text, rightX, centerY, bg, fg)
+    }
+
+    /**
+     * Draws a small filled circle (CI status dot) and returns the x coordinate immediately
+     * to the left of it.
+     *
+     * Colours: green = passing, red = failing, yellow = pending.
+     */
+    private fun paintCiDot(
+        g2: Graphics2D,
+        checksState: ChecksState,
+        rightX: Int,
+        centerY: Int,
+    ): Int {
+        val color = when (checksState) {
+            ChecksState.PASSING -> StackGraphColors.CI_PASSING
+            ChecksState.FAILING -> StackGraphColors.CI_FAILING
+            ChecksState.PENDING -> StackGraphColors.CI_PENDING
+            ChecksState.NONE    -> return rightX
+        }
+        val dotD = 8.0
+        val dot  = Ellipse2D.Double(
+            (rightX - dotD).toDouble(),
+            (centerY - dotD / 2).toDouble(),
+            dotD,
+            dotD,
+        )
+        g2.color = color
+        g2.fill(dot)
+        return (rightX - dotD - 2).toInt()
     }
 
     // ------------------------------------------------------------------

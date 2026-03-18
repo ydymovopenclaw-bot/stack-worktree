@@ -52,8 +52,7 @@
     </actions>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.ydymovopenclawbot.stackworktree.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.ydymovopenclawbot.stackworktree.startup.MyProjectActivity" />
+<postStartupActivity implementation="com.github.ydymovopenclawbot.stackworktree.startup.MyProjectActivity" />
         <changesViewContent
             id="Stacks"
             tabName="Stacks"
