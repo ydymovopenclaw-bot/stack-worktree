@@ -79,6 +79,7 @@ class PrStatusPoller(
     @Volatile
     private var tabVisible: Boolean = false
 
+    @Volatile
     private var pollingJob: Job? = null
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────

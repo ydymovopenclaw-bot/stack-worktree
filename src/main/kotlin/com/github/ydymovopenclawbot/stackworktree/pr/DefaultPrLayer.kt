@@ -5,8 +5,6 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.github.ydymovopenclawbot.stackworktree.pr.ChecksState
-import com.github.ydymovopenclawbot.stackworktree.pr.ReviewState
 
 /**
  * Default [PrLayer] implementation that delegates all host operations to the active
@@ -31,6 +29,9 @@ class DefaultPrLayer(private val project: Project) : PrLayer {
     }
 
     override fun getPrStatus(branch: String): PrStatus? {
+        // TODO: This makes two sequential network calls (findPr + getPrStatus).
+        //  Consider adding PrProvider.getPrStatusByBranch(branch) to merge them into one
+        //  round-trip, especially when polling across many branches.
         val pr = findPr(branch) ?: return null
         return try {
             provider.getPrStatus(pr.number)

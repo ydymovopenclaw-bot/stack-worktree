@@ -321,7 +321,7 @@ class StackGraphPanel : JPanel() {
 
                 // CI dot — small circle to the left of the PR badge
                 if (status.checksState != ChecksState.NONE) {
-                    paintCiDot(g2, status.checksState, badgeX, badgeCy.toInt())
+                    badgeX = paintCiDot(g2, status.checksState, badgeX, badgeCy.toInt())
                 }
             }
         }
