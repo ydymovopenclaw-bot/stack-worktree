@@ -14,7 +14,7 @@ import com.intellij.ui.dsl.builder.panel
  * ## Implementation notes
  * - Extends [BoundConfigurable]: [isModified], [apply], and [reset] are handled
  *   automatically by the Kotlin UI DSL bindings — no boilerplate overrides needed.
- * - Binds directly to [StackTreeSettingsService.state] fields.  Because
+ * - Binds directly to [StackTreeSettingsService.settingsState] fields.  Because
  *   [StackTreeSettingsService.loadState] copies values *in-place* (rather than
  *   replacing the state reference), the property references captured at panel
  *   creation remain valid for the lifetime of the project.
@@ -26,7 +26,7 @@ import com.intellij.ui.dsl.builder.panel
  */
 class StackTreeConfigurable(private val project: Project) : BoundConfigurable("StackTree") {
 
-    private val svc get() = StackTreeSettingsService.getInstance(project)
+    private val svc = StackTreeSettingsService.getInstance(project)
 
     override fun createPanel() = panel {
 
