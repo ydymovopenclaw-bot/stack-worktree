@@ -42,6 +42,7 @@ class GitLabProvider(
     // ── PrProvider ────────────────────────────────────────────────────────────
 
     override fun createPr(branch: String, base: String, title: String, body: String): PrInfo {
+        LOG.info("GitLabProvider: createPr source='$branch' target='$base'")
         val token = resolveToken()
         val payload = buildJsonPayload(
             "source_branch" to branch,
@@ -54,6 +55,7 @@ class GitLabProvider(
     }
 
     override fun updatePr(prId: Int, title: String?, body: String?, base: String?): PrInfo {
+        LOG.info("GitLabProvider: updatePr #$prId title=$title base=$base")
         val token = resolveToken()
         val fields = buildList<Pair<String, String>> {
             title?.let { add("title" to it) }
@@ -66,6 +68,7 @@ class GitLabProvider(
     }
 
     override fun getPrStatus(prId: Int): PrStatus {
+        LOG.info("GitLabProvider: getPrStatus #$prId")
         val token = resolveToken()
         val base = "${repoInfo.apiBaseUrl}/api/v4/projects/${repoInfo.encodedNamespace}"
 
@@ -77,6 +80,7 @@ class GitLabProvider(
     }
 
     override fun closePr(prId: Int) {
+        LOG.info("GitLabProvider: closePr #$prId")
         val token = resolveToken()
         // GitLab closes an MR by sending state_event=close via a PUT update
         val payload = buildJsonPayload("state_event" to "close")
@@ -86,8 +90,13 @@ class GitLabProvider(
 
     override fun findPrByBranch(branch: String): PrInfo? {
         val token = resolveToken()
+        // Branch names can contain '/' (e.g. "feature/foo"). The GitLab API treats the
+        // query string value as a literal path segment when routing, so slashes must be
+        // percent-encoded to avoid a 404 or wrong-repo match.
+        val encodedBranch = branch.replace("/", "%2F")
         val url = "${repoInfo.apiBaseUrl}/api/v4/projects/${repoInfo.encodedNamespace}/merge_requests" +
-            "?source_branch=$branch&state=opened&per_page=1"
+            "?source_branch=$encodedBranch&state=opened&per_page=1"
+        LOG.info("GitLabProvider: findPrByBranch '$branch' → GET $url")
         val list = execute(getRequest(url, token)) { GitLabJsonParser.parseMrList(it) }
         return list.firstOrNull()
     }
@@ -122,6 +131,7 @@ class GitLabProvider(
             )
 
         tokenStore.storeToken(repoInfo.host, pat)
+        LOG.info("GitLabProvider: PAT stored for host '${repoInfo.host}'")
         return pat
     }
 
@@ -181,7 +191,6 @@ class GitLabProvider(
         buildJsonObject { entries.forEach { (k, v) -> put(k, v) } }.toString()
 
     private companion object {
-        @Suppress("unused")
         private val LOG = Logger.getInstance(GitLabProvider::class.java)
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }

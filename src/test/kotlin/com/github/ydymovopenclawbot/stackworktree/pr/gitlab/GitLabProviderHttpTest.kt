@@ -317,6 +317,17 @@ class GitLabProviderHttpTest {
  * Thin wrapper around the same HTTP mechanics used by [GitLabProvider], with
  * [GitLabRepoInfo] and the auth token injected instead of resolved from the IDE.
  * This lets us write full end-to-end HTTP tests without an IntelliJ container.
+ *
+ * **IMPORTANT — keep in sync with [GitLabProvider]**: This class intentionally duplicates
+ * the HTTP logic from [GitLabProvider] rather than testing [GitLabProvider] directly,
+ * because [GitLabProvider] requires the IntelliJ project service container to resolve its
+ * token via [GitLabTokenStore].  Any change to a URL path, query-parameter encoding, HTTP
+ * verb, header, or JSON body field in [GitLabProvider] **must** be reflected here, and vice
+ * versa, or the test suite will diverge silently from production behaviour.
+ *
+ * In particular, note that [findPrByBranch] must URL-encode branch names (replacing '/'
+ * with '%2F') to match the production implementation — the test at
+ * `findPrByBranch returns first MR when list is non-empty` asserts this explicitly.
  */
 private class TestableGitLabClient(
     private val repoInfo: GitLabRepoInfo,

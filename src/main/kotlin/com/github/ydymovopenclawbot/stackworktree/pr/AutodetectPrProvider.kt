@@ -27,6 +27,12 @@ import com.intellij.openapi.project.Project
  *
  * @param gitLabHostOverride  When non-null, forces GitLab detection for a self-hosted
  *   instance whose domain name does not contain the word "gitlab".
+ *
+ *   **Note**: The IntelliJ service container always passes only [Project] when constructing
+ *   this service, so [gitLabHostOverride] is always `null` at runtime.  It exists solely for
+ *   programmatic construction in tests.
+ *   TODO(S6.x): wire this from a persisted settings object (e.g. PropertiesComponent) once
+ *   a configuration UI for self-hosted GitLab instances is available.
  */
 @Service(Service.Level.PROJECT)
 class AutodetectPrProvider(

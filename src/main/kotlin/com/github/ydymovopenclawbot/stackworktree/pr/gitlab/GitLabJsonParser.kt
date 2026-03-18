@@ -5,6 +5,7 @@ import com.github.ydymovopenclawbot.stackworktree.pr.PrInfo
 import com.github.ydymovopenclawbot.stackworktree.pr.PrState
 import com.github.ydymovopenclawbot.stackworktree.pr.PrStatus
 import com.github.ydymovopenclawbot.stackworktree.pr.ReviewState
+import com.github.ydymovopenclawbot.stackworktree.pr.PrProviderException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
@@ -39,18 +40,28 @@ object GitLabJsonParser {
         json.parseToJsonElement(rawJson).jsonArray.map { parseMrObject(it.jsonObject) }
 
     private fun parseMrObject(obj: kotlinx.serialization.json.JsonObject): PrInfo {
-        val iid = obj["iid"]!!.jsonPrimitive.int
-        val title = obj["title"]!!.jsonPrimitive.content
-        val url = obj["web_url"]!!.jsonPrimitive.content
-        // GitLab states: "opened", "closed", "merged", "locked"
-        val apiState = obj["state"]!!.jsonPrimitive.content
+        try {
+            val iid = obj["iid"]?.jsonPrimitive?.int
+                ?: throw PrProviderException("GitLab MR response missing required field 'iid'")
+            val title = obj["title"]?.jsonPrimitive?.content
+                ?: throw PrProviderException("GitLab MR response missing required field 'title'")
+            val url = obj["web_url"]?.jsonPrimitive?.content
+                ?: throw PrProviderException("GitLab MR response missing required field 'web_url'")
+            // GitLab states: "opened", "closed", "merged", "locked"
+            val apiState = obj["state"]?.jsonPrimitive?.content
+                ?: throw PrProviderException("GitLab MR response missing required field 'state'")
 
-        val prState = when (apiState) {
-            "merged" -> PrState.MERGED
-            "closed" -> PrState.CLOSED
-            else -> PrState.OPEN   // "opened", "locked", or unknown → treat as open
+            val prState = when (apiState) {
+                "merged" -> PrState.MERGED
+                "closed" -> PrState.CLOSED
+                else -> PrState.OPEN   // "opened", "locked", or unknown → treat as open
+            }
+            return PrInfo(number = iid, title = title, url = url, state = prState)
+        } catch (e: PrProviderException) {
+            throw e
+        } catch (e: Exception) {
+            throw PrProviderException("Unexpected GitLab MR response shape: ${e.message}", e)
         }
-        return PrInfo(number = iid, title = title, url = url, state = prState)
     }
 
     // ── Pipelines (CI checks) ─────────────────────────────────────────────────
