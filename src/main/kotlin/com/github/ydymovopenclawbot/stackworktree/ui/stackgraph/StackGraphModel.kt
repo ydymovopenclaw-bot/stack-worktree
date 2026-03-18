@@ -15,11 +15,14 @@ enum class HealthStatus {
     /** Uncommitted local modifications exist. */
     DIRTY,
 
-    /** Merge/rebase conflict markers are present. */
+    /** Merge/rebase conflict markers are present (from a previous failed rebase). */
     CONFLICT,
 
     /** Branch has not been rebased onto recent parent changes (behind ≥ 1). */
     STALE,
+
+    /** Branch has been merged into trunk (detected via remote merged-branch list). */
+    MERGED,
 }
 
 /**
