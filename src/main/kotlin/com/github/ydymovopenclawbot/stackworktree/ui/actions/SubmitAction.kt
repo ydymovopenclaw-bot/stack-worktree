@@ -1,7 +1,6 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.actions
 
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
-import com.github.ydymovopenclawbot.stackworktree.ops.SubmitResult
 import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -39,16 +38,9 @@ class SubmitAction : AnAction(
                 indicator.isIndeterminate = true
                 indicator.text = "Pushing branches and creating PRs…"
                 try {
-                    val ops    = project.service<OpsLayer>()
-                    val result = ops.submitStack()
-                    if (result is SubmitResult.NoState) {
-                        notify(
-                            project,
-                            "Submit Stack: no stack state found. Track some branches first.",
-                            NotificationType.WARNING,
-                        )
-                    }
-                    // Success notification is shown by OpsLayerImpl.submitStack() via UiLayer.
+                    val ops = project.service<OpsLayer>()
+                    ops.submitStack()
+                    // Success and NoState notifications are both shown by OpsLayerImpl via UiLayer.
                 } catch (ex: Exception) {
                     LOG.warn("SubmitAction: submit failed", ex)
                     notify(

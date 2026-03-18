@@ -128,7 +128,9 @@
                 class="com.github.ydymovopenclawbot.stackworktree.ui.actions.SubmitAction"
                 text="Submit Stack"
                 description="Push all stack branches and create or update pull requests"
-                icon="AllIcons.Actions.Upload"/>
+                icon="AllIcons.Actions.Upload">
+            <add-to-group group-id="ChangesView.Toolbar" anchor="last"/>
+        </action>
 
         <!--
           Note: Track Branch and Untrack Branch are built programmatically inside
