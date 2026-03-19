@@ -603,6 +603,21 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             popup.add(JSeparator())
         }
 
+        // "Remove Stack" — only when a node is selected and there are tracked branches.
+        if (node != null) {
+            val currentState = stateLayer.load()
+            if (currentState.trackedBranches.isNotEmpty()) {
+                val removeStackItem = JMenuItem("Remove Stack")
+                removeStackItem.addActionListener {
+                    am.getAction("StackWorktree.RemoveStack")?.let { action ->
+                        am.tryToExecute(action, null, graph, ActionPlaces.POPUP, true)
+                    }
+                }
+                popup.add(removeStackItem)
+                popup.add(JSeparator())
+            }
+        }
+
         // "Track Branch…" — always available.
         // State is loaded inside the listener so it reflects mutations that occurred
         // between popup-open time and the moment the user clicks the item.

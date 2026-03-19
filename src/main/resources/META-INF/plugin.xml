@@ -141,6 +141,11 @@
             <add-to-group group-id="ChangesViewToolbar" anchor="last"/>
         </action>
 
+        <action id="StackWorktree.RemoveStack"
+                class="com.github.ydymovopenclawbot.stackworktree.actions.RemoveStackAction"
+                text="Remove Stack"
+                description="Remove all branches from the stack, optionally deleting git branches and worktrees"/>
+
         <!--
           Note: Track Branch and Untrack Branch are built programmatically inside
           StacksTabFactory's JPopupMenu and do not have standalone AnAction classes.

@@ -100,6 +100,14 @@ class StateStorage(
         exec("update-ref", REF, commitSha)
     }
 
+    override fun delete() {
+        if (!exists()) return
+        val result = runner.run(root, listOf("update-ref", "-d", REF))
+        if (!result.isSuccess) {
+            throw GitException("Failed to delete $REF: ${result.stderr}")
+        }
+    }
+
     // ----------------------------------------------------------------------------------
     // Private helpers
     // ----------------------------------------------------------------------------------
