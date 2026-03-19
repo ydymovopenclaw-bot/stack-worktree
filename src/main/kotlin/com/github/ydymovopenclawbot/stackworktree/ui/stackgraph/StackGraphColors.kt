@@ -119,6 +119,17 @@ object StackGraphColors {
     val CI_PENDING: JBColor = JBColor(Color(0xFBBC04), Color(0xE6A817))
 
     // ------------------------------------------------------------------
+    // Keyboard focus ring
+    // ------------------------------------------------------------------
+
+    /**
+     * Dashed outer ring drawn around the keyboard-focused node.
+     * Distinct from [NODE_SELECTED_BORDER] (solid blue selection ring) so users can
+     * differentiate keyboard focus from mouse selection at a glance.
+     */
+    val KEYBOARD_FOCUS_RING: JBColor = JBColor(Color(0x1A73E8), Color(0x8AB4F8))
+
+    // ------------------------------------------------------------------
     // Helper
     // ------------------------------------------------------------------
 
