@@ -45,7 +45,7 @@ class WorktreeOps(
 
     // ── Dependencies ──────────────────────────────────────────────────────────
 
-    private fun gitLayer(): GitLayer = gitLayerOverride ?: GitLayerImpl(project, repoRoot())
+    private fun gitLayer(): GitLayer = gitLayerOverride ?: GitLayerImpl.withRoot(project, repoRoot())
 
     private fun stateStore(): StackStateStore = stateStoreOverride ?: run {
         val path = java.io.File(repoRoot().path).toPath()

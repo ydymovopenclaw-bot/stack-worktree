@@ -29,13 +29,14 @@ import git4idea.update.GitUpdateResult
 @Service(Service.Level.PROJECT)
 class GitLayerImpl(
     private val project: Project,
-    /**
-     * Optional root override for testing: when non-null, bypasses
-     * [GitUtil.getRepositoryManager] so tests can supply an explicit repo root
-     * without registering it with IntelliJ's VFS/git index.
-     */
-    private val rootOverride: VirtualFile? = null,
 ) : GitLayer {
+
+    private var rootOverride: VirtualFile? = null
+
+    companion object {
+        fun withRoot(project: Project, root: VirtualFile): GitLayerImpl =
+            GitLayerImpl(project).apply { rootOverride = root }
+    }
 
     // ── Repository root ───────────────────────────────────────────────────────
 

@@ -31,7 +31,7 @@ class GitLayerImplTest : BasePlatformTestCase() {
         exec("git", "-C", repoDir.absolutePath, "commit", "--allow-empty", "-m", "init")
         val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(repoDir)
             ?: error("VirtualFile not found for $repoDir")
-        gitLayer = GitLayerImpl(project, vf)
+        gitLayer = GitLayerImpl.withRoot(project, vf)
     }
 
     override fun tearDown() {
