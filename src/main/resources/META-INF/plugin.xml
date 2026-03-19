@@ -129,7 +129,9 @@
                 text="Sync"
                 description="Fetch remote and sync stacks: detect merged branches, prune worktrees, and refresh ahead/behind counts"
                 icon="AllIcons.Actions.Refresh">
-            <add-to-group group-id="ChangesViewToolbar" anchor="last"/>
+            <add-to-group group-id="ChangesView.Toolbar" anchor="last"/>
+            <!-- S7.2: Ctrl+Shift+Y — no conflict in default IntelliJ keymap -->
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift Y"/>
         </action>
 
         <!-- S6.3: Submit stack — push all branches and create/update PRs -->
@@ -138,7 +140,13 @@
                 text="Submit Stack"
                 description="Push all stack branches and create or update pull requests"
                 icon="AllIcons.Actions.Upload">
-            <add-to-group group-id="ChangesViewToolbar" anchor="last"/>
+            <add-to-group group-id="ChangesView.Toolbar" anchor="last"/>
+            <!--
+              S7.2: Ctrl+Alt+Shift+S avoids conflicts with:
+                - Ctrl+Shift+S  = "Save All" (IdeaVim / File menu)
+                - Ctrl+Alt+S    = Settings
+            -->
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift S"/>
         </action>
 
         <!--
@@ -158,4 +166,78 @@
         is accessible only via the stack graph right-click context menu.  Registration in
         <actions> for keyboard-shortcut / Find Action access is deferred to a future task.
     -->
+
+    <!--
+      S7.2: StackTree Keymap group.
+
+      All six StackTree toolbar actions appear here as a named group so they surface in
+      Settings > Keymap > StackTree, allowing users to customise every shortcut.
+
+      Layout:
+        New Stack   — no default shortcut (user-assignable)
+        Add Branch  — no default shortcut (user-assignable)
+        Restack     — Ctrl+Alt+Shift+R  (avoids conflict with Ctrl+Shift+R = Replace in Path)
+        Submit      — Ctrl+Alt+Shift+S  (registered on StackWorktree.SubmitStack above)
+        Sync        — Ctrl+Shift+Y      (registered on StackWorktree.Sync above)
+        Refresh     — F5
+
+      The three actions with pre-existing IDs (StackTree.NewStack, StackWorktree.Sync,
+      StackWorktree.SubmitStack) are included via <reference> so they appear in the Keymap
+      group without being registered twice.  New actions (Restack, Refresh, AddBranch) are
+      registered here for the first time.
+    -->
+    <actions>
+        <group id="StackTree"
+               text="StackTree"
+               description="StackTree stacked-branch actions"
+               popup="false">
+
+            <!-- Already registered above; included here for Keymap grouping only. -->
+            <reference ref="StackTree.NewStack"/>
+
+            <!--
+              Restack — Ctrl+Alt+Shift+R.
+              Uses the same RestackAction class as the toolbar (instantiated fresh by the
+              platform from the no-arg constructor, independent of the toolbar instance).
+            -->
+            <action id="StackWorktree.Restack"
+                    class="com.github.ydymovopenclawbot.stackworktree.ui.actions.RestackAction"
+                    text="Restack"
+                    description="Rebase all stacks bottom-to-top onto their parents"
+                    icon="AllIcons.General.Reset">
+                <!--
+                  Ctrl+Alt+Shift+R avoids conflict with:
+                    - Ctrl+Shift+R = "Replace in Path" / "Run" (depending on keymap)
+                -->
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift R"/>
+            </action>
+
+            <!--
+              Add Branch — no default shortcut.
+              Registered so the action is discoverable via Find Action and Keymap settings.
+            -->
+            <action id="StackWorktree.AddBranch"
+                    class="com.github.ydymovopenclawbot.stackworktree.ui.actions.AddBranchAction"
+                    text="Add Branch"
+                    description="Add a branch to the current stack"
+                    icon="AllIcons.Vcs.Branch"/>
+
+            <!-- Submit and Sync — keyboard shortcuts added directly to their <action> elements above. -->
+            <reference ref="StackWorktree.SubmitStack"/>
+            <reference ref="StackWorktree.Sync"/>
+
+            <!--
+              Refresh — F5.
+              Uses the no-arg constructor of RefreshStacksAction, which falls back to
+              UiLayer.refresh() (publishes STACK_STATE_TOPIC → StacksTabFactory.performRefresh).
+            -->
+            <action id="StackWorktree.Refresh"
+                    class="com.github.ydymovopenclawbot.stackworktree.ui.actions.RefreshStacksAction"
+                    text="Refresh"
+                    description="Reload stack state and recalculate ahead/behind counts"
+                    icon="AllIcons.Actions.Refresh">
+                <keyboard-shortcut keymap="$default" first-keystroke="F5"/>
+            </action>
+        </group>
+    </actions>
 </idea-plugin>

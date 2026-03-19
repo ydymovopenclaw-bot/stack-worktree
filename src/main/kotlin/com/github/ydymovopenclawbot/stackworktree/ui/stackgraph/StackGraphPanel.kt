@@ -12,13 +12,17 @@ import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Point
 import java.awt.RenderingHints
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.geom.CubicCurve2D
 import java.awt.geom.Ellipse2D
 import java.awt.geom.Rectangle2D
 import java.awt.geom.RoundRectangle2D
+import javax.swing.AbstractAction
+import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 
 /**
@@ -73,12 +77,28 @@ class StackGraphPanel : JPanel() {
     var selectedNodeId: String? = null
         private set
 
+    /**
+     * Nodes ordered top-to-bottom by their Y position in the layout for consistent keyboard
+     * navigation.  Updated on every [updateGraph] call.
+     */
+    private var navOrder: List<StackNodeData> = emptyList()
+
+    /**
+     * Index into [navOrder] of the keyboard-focused node; -1 when no node has keyboard focus.
+     *
+     * Exposed as `internal` so [StackGraphPanelTest] can verify navigation state without
+     * simulating raw key events.
+     */
+    internal var focusedNodeIndex: Int = -1
+        private set
+
     // ------------------------------------------------------------------
     // Initialisation
     // ------------------------------------------------------------------
 
     init {
         isOpaque = true
+        isFocusable = true
         background = StackGraphColors.PANEL_BG
 
         addMouseListener(object : MouseAdapter() {
@@ -87,9 +107,12 @@ class StackGraphPanel : JPanel() {
                 // popup-trigger correctness; skip it here to avoid double invocation.
                 if (SwingUtilities.isRightMouseButton(e)) return
                 val hit = hitTest(e.x, e.y) ?: return
+                // Transfer keyboard focus to the panel so arrow keys work immediately after a click.
+                requestFocusInWindow()
                 when (e.clickCount) {
                     1 -> {
                         selectedNodeId = hit.id
+                        focusedNodeIndex = navOrder.indexOfFirst { it.id == hit.id }
                         repaint()
                         onNodeSelected?.invoke(hit)
                     }
@@ -108,11 +131,22 @@ class StackGraphPanel : JPanel() {
                 val hit = hitTest(e.x, e.y)
                 if (hit != null) {
                     selectedNodeId = hit.id
+                    focusedNodeIndex = navOrder.indexOfFirst { it.id == hit.id }
                     repaint()
                 }
                 onContextMenu?.invoke(hit, Point(e.x, e.y))
             }
         })
+
+        setupKeyboardNavigation()
+
+        // Screen-reader accessibility: name and description are read by assistive technology.
+        // Use getAccessibleContext() (not the field) so the lazy instance is created first.
+        getAccessibleContext()?.let { ctx ->
+            ctx.accessibleName        = "Stack Graph"
+            ctx.accessibleDescription =
+                "Use arrow keys to navigate between branches, Enter to check out the focused branch, Space to select it"
+        }
     }
 
     // ------------------------------------------------------------------
@@ -132,6 +166,11 @@ class StackGraphPanel : JPanel() {
         nodeById       = data.nodes.associateBy { it.id }
         layoutResult   = StackGraphLayout.compute(data)
         selectedNodeId = null
+
+        // Re-derive the top-to-bottom visual order so keyboard navigation reflects the
+        // rendered layout.  Nodes with no rect (shouldn't happen) sort to the top.
+        navOrder = data.nodes.sortedBy { layoutResult.nodeRects[it.id]?.minY ?: 0.0 }
+        focusedNodeIndex = -1
 
         val w = layoutResult.canvasWidth.coerceAtLeast(200)
         val h = layoutResult.canvasHeight.coerceAtLeast(100)
@@ -227,13 +266,26 @@ class StackGraphPanel : JPanel() {
     // ------------------------------------------------------------------
 
     private fun paintNodes(g2: Graphics2D) {
+        val focusedId = navOrder.getOrNull(focusedNodeIndex)?.id
         for ((id, rect) in layoutResult.nodeRects) {
             val node = nodeById[id] ?: continue
-            paintNode(g2, node, rect, isSelected = (id == selectedNodeId))
+            paintNode(
+                g2,
+                node,
+                rect,
+                isSelected = (id == selectedNodeId),
+                isFocused  = (id == focusedId),
+            )
         }
     }
 
-    private fun paintNode(g2: Graphics2D, node: StackNodeData, rect: Rectangle2D, isSelected: Boolean) {
+    private fun paintNode(
+        g2: Graphics2D,
+        node: StackNodeData,
+        rect: Rectangle2D,
+        isSelected: Boolean,
+        isFocused: Boolean = false,
+    ) {
         val arc  = StackGraphLayout.CORNER_ARC.toDouble()
         val rrect = RoundRectangle2D.Double(rect.x, rect.y, rect.width, rect.height, arc, arc)
 
@@ -258,6 +310,24 @@ class StackGraphPanel : JPanel() {
             g2.color  = StackGraphColors.NODE_SELECTED_BORDER
             g2.stroke = BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
             g2.draw(selRect)
+        }
+
+        // Keyboard focus ring — outermost dashed ring, drawn only when the node has
+        // keyboard focus so users can distinguish keyboard focus from mouse selection.
+        if (isFocused) {
+            val outset  = 2.5
+            val focArc  = arc + outset * 2
+            val focRect = RoundRectangle2D.Double(
+                rect.x - outset, rect.y - outset,
+                rect.width + outset * 2, rect.height + outset * 2,
+                focArc, focArc,
+            )
+            g2.color  = StackGraphColors.KEYBOARD_FOCUS_RING
+            g2.stroke = BasicStroke(
+                1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                1f, floatArrayOf(4f, 3f), 0f,  // dashed: 4px on, 3px off
+            )
+            g2.draw(focRect)
         }
 
         // Current-branch indicator dot (small filled circle, top-left corner)
@@ -365,12 +435,96 @@ class StackGraphPanel : JPanel() {
      * Programmatically selects the node with [id] and fires [onNodeSelected].
      * No-op if [id] is not present in the current graph.
      *
+     * Also syncs [focusedNodeIndex] to the selected node so that subsequent
+     * arrow-key presses continue from the newly selected position.
+     *
      * This mirrors the single-click code path and is exposed so that tests can
      * verify callback invocation without simulating [java.awt.event.MouseEvent]s.
      */
     internal fun selectNode(id: String) {
         val node = nodeById[id] ?: return
         selectedNodeId = id
+        focusedNodeIndex = navOrder.indexOfFirst { it.id == id }
+        repaint()
+        onNodeSelected?.invoke(node)
+    }
+
+    // ------------------------------------------------------------------
+    // Keyboard navigation
+    // ------------------------------------------------------------------
+
+    /**
+     * Sets up [InputMap] / [ActionMap] bindings on [JComponent.WHEN_FOCUSED] so keyboard
+     * shortcuts fire only when this panel holds keyboard focus:
+     *
+     * - **↓ (Down)** — move focus to the next node (top → bottom visual order).
+     * - **↑ (Up)**   — move focus to the previous node.
+     * - **Enter**    — invoke [onNodeNavigated] on the focused node (checkout equivalent).
+     * - **Space**    — invoke [onNodeSelected] on the focused node (select equivalent).
+     */
+    private fun setupKeyboardNavigation() {
+        val im = getInputMap(JComponent.WHEN_FOCUSED)
+        val am = actionMap
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "stackgraph.nav.down")
+        am.put("stackgraph.nav.down", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent) = navigateDown()
+        })
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "stackgraph.nav.up")
+        am.put("stackgraph.nav.up", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent) = navigateUp()
+        })
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "stackgraph.nav.enter")
+        am.put("stackgraph.nav.enter", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent) = activateFocusedNode()
+        })
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "stackgraph.nav.space")
+        am.put("stackgraph.nav.space", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent) = selectFocusedNode()
+        })
+    }
+
+    /**
+     * Moves keyboard focus to the next node in visual top-to-bottom order.
+     * If no node is focused yet, focuses the first node.
+     */
+    private fun navigateDown() {
+        if (navOrder.isEmpty()) return
+        focusedNodeIndex = if (focusedNodeIndex < 0) 0
+                           else (focusedNodeIndex + 1).coerceAtMost(navOrder.size - 1)
+        repaint()
+    }
+
+    /**
+     * Moves keyboard focus to the previous node in visual top-to-bottom order.
+     * If no node is focused yet, focuses the first node.
+     */
+    private fun navigateUp() {
+        if (navOrder.isEmpty()) return
+        focusedNodeIndex = if (focusedNodeIndex < 0) 0
+                           else (focusedNodeIndex - 1).coerceAtLeast(0)
+        repaint()
+    }
+
+    /**
+     * Fires [onNodeNavigated] on the focused node (Enter key — checkout equivalent of double-click).
+     * No-op when no node is focused.
+     */
+    private fun activateFocusedNode() {
+        val node = navOrder.getOrNull(focusedNodeIndex) ?: return
+        onNodeNavigated?.invoke(node)
+    }
+
+    /**
+     * Selects the focused node and fires [onNodeSelected] (Space key — select equivalent of single-click).
+     * No-op when no node is focused.
+     */
+    private fun selectFocusedNode() {
+        val node = navOrder.getOrNull(focusedNodeIndex) ?: return
+        selectedNodeId = node.id
         repaint()
         onNodeSelected?.invoke(node)
     }
