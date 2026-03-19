@@ -648,6 +648,9 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     private fun launchCreateWorktree(branchName: String) {
         val ops      = WorktreeOps.forProject(project)
         val gitLayer = project.service<GitLayer>()
+        // Note: listLocalBranches() runs `git branch --list` which is typically < 100ms.
+        // IntelliJ's own git plugin also calls lightweight git commands on the EDT before
+        // showing dialogs, so this is consistent with platform conventions.
         val branches = gitLayer.listLocalBranches()
         val worktreeBranches = cachedWorktrees
             .filter { it.branch.isNotEmpty() }
@@ -663,7 +666,6 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             project               = project,
             branches              = branches,
             worktreeBranches      = worktreeBranches,
-            defaultBasePath       = project.stackStateService().getWorktreeBasePath(),
             preselectedBranch     = branchName,
             pathResolver          = { ops.defaultWorktreePath(it) },
             currentBranch         = currentBranch,
@@ -700,12 +702,21 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                         }
                     }
                 } catch (ex: WorktreeException) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.warn("StacksTabFactory: createWorktree failed", ex)
                     notify("Failed to create worktree: ${ex.message}", NotificationType.ERROR)
                 } catch (ex: IllegalStateException) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.warn("StacksTabFactory: branch already has worktree", ex)
                     notify(ex.message ?: "Branch already has a worktree.", NotificationType.WARNING)
                 } catch (ex: Exception) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.error("StacksTabFactory: createWorktree unexpected error", ex)
                     notify("Unexpected error: ${ex.message}", NotificationType.ERROR)
                 }

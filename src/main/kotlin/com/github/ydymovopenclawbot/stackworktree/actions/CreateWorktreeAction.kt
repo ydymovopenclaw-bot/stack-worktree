@@ -55,6 +55,9 @@ class CreateWorktreeAction : AnAction() {
 
         val ops      = WorktreeOps.forProject(project)
         val gitLayer = project.service<GitLayer>()
+        // Note: listLocalBranches() runs `git branch --list` which is typically < 100ms.
+        // IntelliJ's own git plugin also calls lightweight git commands on the EDT before
+        // showing dialogs, so this is consistent with platform conventions.
         val branches = gitLayer.listLocalBranches()
 
         val dialog = CreateWorktreeDialog(
@@ -100,12 +103,21 @@ class CreateWorktreeAction : AnAction() {
                         }
                     }
                 } catch (ex: WorktreeException) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.warn("CreateWorktreeAction: git worktree add failed", ex)
                     notify(project, "Failed to create worktree: ${ex.message}", NotificationType.ERROR)
                 } catch (ex: IllegalStateException) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.warn("CreateWorktreeAction: branch already has worktree", ex)
                     notify(project, ex.message ?: "Branch already has a worktree.", NotificationType.WARNING)
                 } catch (ex: Exception) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.error("CreateWorktreeAction: unexpected error", ex)
                     notify(project, "Unexpected error: ${ex.message}", NotificationType.ERROR)
                 }

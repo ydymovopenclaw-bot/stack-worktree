@@ -200,6 +200,8 @@ class CreateWorktreeDialog(
         if (createNewBranchBox.isSelected) {
             val branchError = validateNewBranch(newBranchNameField.text.trim(), branches)
             if (branchError != null) return ValidationInfo(branchError, newBranchNameField)
+            val base = getBaseBranch()
+            if (base.isBlank()) return ValidationInfo("Select a base branch.", baseBranchCombo)
         } else {
             val selected = branchCombo.selectedItem as? String ?: ""
             val branchError = validateExistingBranch(selected, worktreeBranches)
