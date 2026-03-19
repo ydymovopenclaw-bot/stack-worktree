@@ -14,12 +14,16 @@ import java.nio.file.Path
  * giving IntelliJ full visibility into git operations (credential helpers, SSH agents, etc.).
  *
  * [GitCommand] entries used:
- *  - REV_PARSE  → git rev-parse  (also handles --abbrev-ref for currentBranch)
- *  - REV_LIST   → git rev-list
- *  - LOG        → git log
- *  - BRANCH     → git branch
- *  - REMOTE     → git remote
- *  - PUSH       → git push
+ *  - REV_PARSE    → git rev-parse
+ *  - REV_LIST     → git rev-list
+ *  - LOG          → git log
+ *  - BRANCH       → git branch
+ *  - REMOTE       → git remote
+ *  - PUSH         → git push
+ *  - CAT_FILE     → git cat-file
+ *  - UPDATE_REF   → git update-ref
+ *  - HASH_OBJECT  → git hash-object
+ *  - COMMIT_TREE  → git commit-tree
  */
 class IntelliJGitRunner(private val project: Project) : GitRunner {
 
@@ -30,6 +34,10 @@ class IntelliJGitRunner(private val project: Project) : GitRunner {
         "branch" to GitCommand.BRANCH,
         "remote" to GitCommand.REMOTE,
         "push" to GitCommand.PUSH,
+        "cat-file" to GitCommand.CAT_FILE,
+        "update-ref" to GitCommand.UPDATE_REF,
+        "hash-object" to GitCommand.HASH_OBJECT,
+        "commit-tree" to GitCommand.COMMIT_TREE,
     )
 
     override fun run(workDir: Path, args: List<String>): GitRunResult {
