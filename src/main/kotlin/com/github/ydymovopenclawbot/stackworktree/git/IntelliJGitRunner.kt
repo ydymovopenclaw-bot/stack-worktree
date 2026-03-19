@@ -37,7 +37,8 @@ class IntelliJGitRunner(private val project: Project) : GitRunner {
         "cat-file" to GitCommand.CAT_FILE,
         "update-ref" to GitCommand.UPDATE_REF,
         "hash-object" to GitCommand.HASH_OBJECT,
-        "commit-tree" to GitCommand.COMMIT_TREE,
+        // "commit-tree" — no GitCommand constant available in this platform version;
+        // falls back to ProcessGitRunner via the "unsupported command" path.
     )
 
     override fun run(workDir: Path, args: List<String>): GitRunResult {
