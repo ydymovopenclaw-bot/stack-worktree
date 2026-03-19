@@ -129,7 +129,7 @@
                 text="Sync"
                 description="Fetch remote and sync stacks: detect merged branches, prune worktrees, and refresh ahead/behind counts"
                 icon="AllIcons.Actions.Refresh">
-            <add-to-group group-id="ChangesView.Toolbar" anchor="last"/>
+            <add-to-group group-id="ChangesViewToolbar" anchor="last"/>
         </action>
 
         <!-- S6.3: Submit stack — push all branches and create/update PRs -->
@@ -138,7 +138,7 @@
                 text="Submit Stack"
                 description="Push all stack branches and create or update pull requests"
                 icon="AllIcons.Actions.Upload">
-            <add-to-group group-id="ChangesView.Toolbar" anchor="last"/>
+            <add-to-group group-id="ChangesViewToolbar" anchor="last"/>
         </action>
 
         <!--

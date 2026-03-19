@@ -16,7 +16,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import org.jetbrains.plugins.github.authentication.GithubAuthenticationManager
+import org.jetbrains.plugins.github.authentication.GHAccountsUtil
 import org.jetbrains.plugins.github.authentication.accounts.GHAccountManager
 
 /**
@@ -133,8 +133,7 @@ class GitHubProvider(private val project: Project) : PrProvider {
      *   be retrieved.
      */
     private fun resolveToken(repo: GitHubRepoInfo): String {
-        val authManager = GithubAuthenticationManager.getInstance()
-        val accounts = authManager.getAccounts()
+        val accounts = GHAccountsUtil.accounts
         if (accounts.isEmpty()) {
             throw PrProviderException(
                 "No GitHub account configured in the IDE. " +

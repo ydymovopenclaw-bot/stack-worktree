@@ -431,8 +431,8 @@ class StackGraphPanel : JPanel() {
         }
         val dotD = 8.0
         val dot  = Ellipse2D.Double(
-            (rightX - dotD).toDouble(),
-            (centerY - dotD / 2).toDouble(),
+            rightX - dotD,
+            centerY - dotD / 2,
             dotD,
             dotD,
         )
