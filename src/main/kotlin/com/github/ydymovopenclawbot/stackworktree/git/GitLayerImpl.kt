@@ -33,11 +33,6 @@ class GitLayerImpl(
 
     private var rootOverride: VirtualFile? = null
 
-    companion object {
-        fun withRoot(project: Project, root: VirtualFile): GitLayerImpl =
-            GitLayerImpl(project).apply { rootOverride = root }
-    }
-
     // ── Repository root ───────────────────────────────────────────────────────
 
     /**
@@ -307,6 +302,9 @@ class GitLayerImpl(
     // ── Porcelain parser ──────────────────────────────────────────────────────
 
     companion object {
+
+        fun withRoot(project: Project, root: VirtualFile): GitLayerImpl =
+            GitLayerImpl(project).apply { rootOverride = root }
 
         /**
          * Parses the output of `git worktree list --porcelain`.
