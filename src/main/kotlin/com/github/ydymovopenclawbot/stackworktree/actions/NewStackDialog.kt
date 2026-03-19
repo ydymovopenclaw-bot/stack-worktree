@@ -42,6 +42,9 @@ class NewStackDialog(
         }
     }
 
-    override fun doValidate(): ValidationInfo? =
-        if (trunkBranch.isBlank()) ValidationInfo("Trunk branch must not be blank") else null
+    override fun doValidate(): ValidationInfo? = when {
+        trunkBranch.isBlank() -> ValidationInfo("Trunk branch must not be blank")
+        !isValidBranchName(trunkBranch) -> ValidationInfo("'$trunkBranch' is not a valid git branch name")
+        else -> null
+    }
 }
