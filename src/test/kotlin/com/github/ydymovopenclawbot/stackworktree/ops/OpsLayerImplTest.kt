@@ -326,7 +326,7 @@ class OpsLayerImplTest {
         store:      FakeStateStore,
         ui:         FakeUiLayer    = FakeUiLayer(),
         stateLayer: FakeStateLayer = FakeStateLayer(),
-    ) = OpsLayerImpl(noProject, git, store, ui, stateLayer)
+    ) = OpsLayerImpl.forTest(noProject, git, store, ui, stateLayer)
 
     private fun linearState() = StackState(
         repoConfig = RepoConfig(trunk = "main", remote = "origin"),

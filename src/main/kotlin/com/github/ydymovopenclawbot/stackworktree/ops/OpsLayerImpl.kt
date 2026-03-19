@@ -39,14 +39,28 @@ private val LOG = logger<OpsLayerImpl>()
 @Service(Service.Level.PROJECT)
 class OpsLayerImpl(
     private val project: Project,
-    private val gitLayerOverride: GitLayer? = null,
-    private val stateStoreOverride: StackStateStore? = null,
-    private val uiLayerOverride: UiLayer? = null,
-    private val stateLayerOverride: StateLayer? = null,
 ) : OpsLayer {
+
+    private var gitLayerOverride: GitLayer? = null
+    private var stateStoreOverride: StackStateStore? = null
+    private var uiLayerOverride: UiLayer? = null
+    private var stateLayerOverride: StateLayer? = null
 
     companion object {
         fun forProject(project: Project): OpsLayer = OpsLayerImpl(project)
+
+        fun forTest(
+            project: Project,
+            gitLayer: GitLayer? = null,
+            stateStore: StackStateStore? = null,
+            uiLayer: UiLayer? = null,
+            stateLayer: StateLayer? = null,
+        ): OpsLayerImpl = OpsLayerImpl(project).apply {
+            gitLayerOverride = gitLayer
+            stateStoreOverride = stateStore
+            uiLayerOverride = uiLayer
+            stateLayerOverride = stateLayer
+        }
     }
 
     private fun stateLayer(): StateLayer = stateLayerOverride ?: project.service<StateLayer>()
