@@ -1,5 +1,6 @@
 package com.github.ydymovopenclawbot.stackworktree.ui.stackgraph
 
+import com.github.ydymovopenclawbot.stackworktree.MyBundle
 import com.github.ydymovopenclawbot.stackworktree.pr.ChecksState
 import com.github.ydymovopenclawbot.stackworktree.pr.PrState
 import com.github.ydymovopenclawbot.stackworktree.pr.PrStatus
@@ -143,9 +144,8 @@ class StackGraphPanel : JPanel() {
         // Screen-reader accessibility: name and description are read by assistive technology.
         // Use getAccessibleContext() (not the field) so the lazy instance is created first.
         getAccessibleContext()?.let { ctx ->
-            ctx.accessibleName        = "Stack Graph"
-            ctx.accessibleDescription =
-                "Use arrow keys to navigate between branches, Enter to check out the focused branch, Space to select it"
+            ctx.accessibleName        = MyBundle.message("stackgraph.accessible.name")
+            ctx.accessibleDescription = MyBundle.message("stackgraph.accessible.description")
         }
     }
 
