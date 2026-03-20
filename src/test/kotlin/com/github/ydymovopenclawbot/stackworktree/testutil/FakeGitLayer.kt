@@ -45,7 +45,8 @@ open class FakeGitLayer(
     override fun worktreePrune() = Unit
     override fun listLocalBranches(): List<String> = localBranches
     override fun createBranch(branchName: String, baseBranch: String) = Unit
-    override fun deleteBranch(branchName: String) = Unit
+    val deleteBranchCalls = mutableListOf<String>()
+    override fun deleteBranch(branchName: String) { deleteBranchCalls += branchName }
     override fun resolveCommit(branchOrRef: String): String = resolveCommitResult(branchOrRef)
     override fun branchExists(branchName: String): Boolean = branchExistsResult(branchName)
     override fun resetBranch(branchName: String, toCommit: String) = Unit

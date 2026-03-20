@@ -186,6 +186,30 @@ interface OpsLayer {
     fun restackAll(
         onProgress: ((current: Int, total: Int, branchName: String) -> Unit)? = null,
     ): RestackResult
+
+    /**
+     * Removes the entire stack: untracks all branches, optionally deletes git branches
+     * and prunes linked worktrees.
+     *
+     * Branches are processed in leaf-first order (children before parents) so that
+     * worktree removal and branch deletion proceed safely from the tips inward.
+     *
+     * Worktree removal failures are **skipped** (not thrown), logged, and reported in
+     * the returned [RemoveStackResult.failedWorktrees] map.
+     *
+     * Runs on the calling thread; callers dispatch via
+     * [com.intellij.openapi.progress.Task.Backgroundable].
+     *
+     * @param stackRoot      The trunk/root branch name of the stack being removed.
+     * @param deleteBranches When `true`, deletes the underlying git branches.
+     * @param removeWorktrees When `true`, removes linked worktrees for each branch.
+     * @return [RemoveStackResult] describing what changed.
+     */
+    fun removeStack(
+        stackRoot: String,
+        deleteBranches: Boolean = false,
+        removeWorktrees: Boolean = false,
+    ): RemoveStackResult
 }
 
 /** Result of a [OpsLayer.restackAll] operation. */

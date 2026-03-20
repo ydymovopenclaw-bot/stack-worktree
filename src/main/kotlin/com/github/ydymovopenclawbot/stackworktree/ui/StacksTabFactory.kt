@@ -636,6 +636,21 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             popup.add(JSeparator())
         }
 
+        // "Remove Stack" — only when a node is selected and there are tracked branches.
+        if (node != null) {
+            val currentState = stateLayer.load()
+            if (currentState.trackedBranches.isNotEmpty()) {
+                val removeStackItem = JMenuItem("Remove Stack")
+                removeStackItem.addActionListener {
+                    am.getAction("StackWorktree.RemoveStack")?.let { action ->
+                        am.tryToExecute(action, null, graph, ActionPlaces.POPUP, true)
+                    }
+                }
+                popup.add(removeStackItem)
+                popup.add(JSeparator())
+            }
+        }
+
         // "Track Branch…" — always available.
         // State is loaded inside the listener so it reflects mutations that occurred
         // between popup-open time and the moment the user clicks the item.
@@ -671,39 +686,85 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     // ── Worktree helpers ──────────────────────────────────────────────────────
 
     /**
-     * Shows [WorktreePathDialog] and — on confirmation — creates a linked worktree for
-     * [branchName] on a background thread.  Fires [StackTreeStateListener] on success.
+     * Shows [CreateWorktreeDialog] and — on confirmation — creates a linked worktree for
+     * [branchName] on a background thread.  If "Create new branch" is checked, creates
+     * the branch first.  If "Open after creation" is checked, opens the worktree in a
+     * new IDE window.  Fires [StackTreeStateListener] on success.
      *
      * Must be called on the EDT.
      */
     private fun launchCreateWorktree(branchName: String) {
-        val ops         = WorktreeOps.forProject(project)
-        val defaultPath = ops.defaultWorktreePath(branchName)
-        val dialog      = WorktreePathDialog(project, branchName, defaultPath)
+        val ops      = WorktreeOps.forProject(project)
+        val gitLayer = project.service<GitLayer>()
+        // Note: listLocalBranches() runs `git branch --list` which is typically < 100ms.
+        // IntelliJ's own git plugin also calls lightweight git commands on the EDT before
+        // showing dialogs, so this is consistent with platform conventions.
+        val branches = gitLayer.listLocalBranches()
+        val worktreeBranches = cachedWorktrees
+            .filter { it.branch.isNotEmpty() }
+            .map { it.branch }
+            .toSet()
+        val existingWorktreePaths = cachedWorktrees
+            .filter { it.path.isNotEmpty() && it.branch.isNotEmpty() }
+            .associate { it.branch to it.path }
+        val currentBranch = GitRepositoryManager.getInstance(project)
+            .repositories.firstOrNull()?.currentBranchName
+
+        val dialog = CreateWorktreeDialog(
+            project               = project,
+            branches              = branches,
+            worktreeBranches      = worktreeBranches,
+            preselectedBranch     = branchName,
+            pathResolver          = { ops.defaultWorktreePath(it) },
+            currentBranch         = currentBranch,
+            existingWorktreePaths = existingWorktreePaths,
+        )
         if (!dialog.showAndGet()) return
 
-        val chosenPath = dialog.getChosenPath()
+        val chosenPath      = dialog.getChosenPath()
+        val selectedBranch  = dialog.getSelectedBranch()
+        val isNewBranch     = dialog.isCreateNewBranch()
+        val baseBranch      = dialog.getBaseBranch()
+        val openAfter       = dialog.isOpenAfterCreation()
+
         if (dialog.isRememberDefault()) {
             val parentDir = File(chosenPath).parent
             if (parentDir != null) project.stackStateService().setWorktreeBasePath(parentDir)
         }
 
-        object : Task.Backgroundable(project, "Creating worktree for '$branchName'…", false) {
+        object : Task.Backgroundable(project, "Creating worktree for '$selectedBranch'…", false) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = true
                 try {
-                    ops.createWorktreeForBranch(branchName, chosenPath)
+                    if (isNewBranch) {
+                        gitLayer.createBranch(selectedBranch, baseBranch)
+                    }
+                    val wt = ops.createWorktreeForBranch(selectedBranch, chosenPath)
                     project.messageBus
                         .syncPublisher(StackTreeStateListener.TOPIC)
                         .stateChanged()
-                    notify("Worktree for '$branchName' created at '$chosenPath'.", NotificationType.INFORMATION)
+                    notify("Worktree for '$selectedBranch' created at '$chosenPath'.", NotificationType.INFORMATION)
+                    if (openAfter) {
+                        ApplicationManager.getApplication().invokeLater {
+                            OpenInNewWindowAction.perform(wt)
+                        }
+                    }
                 } catch (ex: WorktreeException) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.warn("StacksTabFactory: createWorktree failed", ex)
                     notify("Failed to create worktree: ${ex.message}", NotificationType.ERROR)
                 } catch (ex: IllegalStateException) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.warn("StacksTabFactory: branch already has worktree", ex)
                     notify(ex.message ?: "Branch already has a worktree.", NotificationType.WARNING)
                 } catch (ex: Exception) {
+                    if (isNewBranch) {
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                    }
                     LOG.error("StacksTabFactory: createWorktree unexpected error", ex)
                     notify("Unexpected error: ${ex.message}", NotificationType.ERROR)
                 }

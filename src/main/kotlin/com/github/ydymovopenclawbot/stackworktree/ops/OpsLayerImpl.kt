@@ -13,6 +13,8 @@ import com.github.ydymovopenclawbot.stackworktree.state.StackState
 import com.github.ydymovopenclawbot.stackworktree.state.StackStateStore
 import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
 import com.github.ydymovopenclawbot.stackworktree.git.WorktreeException
+import com.github.ydymovopenclawbot.stackworktree.state.StackStateService
+import com.github.ydymovopenclawbot.stackworktree.state.StackTreeStateListener
 import com.github.ydymovopenclawbot.stackworktree.state.TrackedBranchNode
 import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
 import com.github.ydymovopenclawbot.stackworktree.ui.STACK_STATE_TOPIC
@@ -45,6 +47,7 @@ class OpsLayerImpl(
     private var stateStoreOverride: StackStateStore? = null
     private var uiLayerOverride: UiLayer? = null
     private var stateLayerOverride: StateLayer? = null
+    private var stateServiceOverride: StackStateService? = null
 
     companion object {
         fun forProject(project: Project): OpsLayer = OpsLayerImpl(project)
@@ -55,13 +58,17 @@ class OpsLayerImpl(
             stateStore: StackStateStore? = null,
             uiLayer: UiLayer? = null,
             stateLayer: StateLayer? = null,
+            stateService: StackStateService? = null,
         ): OpsLayerImpl = OpsLayerImpl(project).apply {
             gitLayerOverride = gitLayer
             stateStoreOverride = stateStore
             uiLayerOverride = uiLayer
             stateLayerOverride = stateLayer
+            stateServiceOverride = stateService
         }
     }
+
+    private fun stateService(): StackStateService = stateServiceOverride ?: project.stackStateService()
 
     private fun stateLayer(): StateLayer = stateLayerOverride ?: project.service<StateLayer>()
 
@@ -386,6 +393,69 @@ class OpsLayerImpl(
         notifyStateChanged()
     }
 
+    override fun removeStack(
+        stackRoot: String,
+        deleteBranches: Boolean,
+        removeWorktrees: Boolean,
+    ): RemoveStackResult {
+        val sl    = stateLayer()
+        val git   = gitLayer()
+        val store = stateStore()
+
+        val (clearedState, leafFirstBranches) = Algorithms.applyRemoveStack(sl.load(), stackRoot)
+
+        val deletedBranches   = mutableListOf<String>()
+        val removedWorktrees  = mutableListOf<String>()
+        val failedWorktrees   = mutableMapOf<String, String>()
+
+        for (branch in leafFirstBranches) {
+            // Optionally remove linked worktree (skip on failure).
+            if (removeWorktrees) {
+                val wtPath = stateService().getWorktreePath(branch)
+                if (wtPath != null) {
+                    try {
+                        git.worktreeRemove(wtPath)
+                        removedWorktrees += wtPath
+                    } catch (e: Exception) {
+                        LOG.warn("removeStack: failed to remove worktree '$wtPath' for '$branch': ${e.message}")
+                        failedWorktrees[branch] = e.message ?: "unknown error"
+                    }
+                }
+            }
+
+            // Optionally delete the git branch.
+            if (deleteBranches) {
+                try {
+                    git.deleteBranch(branch)
+                    deletedBranches += branch
+                } catch (e: Exception) {
+                    LOG.warn("removeStack: failed to delete branch '$branch': ${e.message}")
+                }
+            }
+        }
+
+        // Clear all state stores.
+        sl.save(clearedState)
+        stateService().clearAll()
+        try {
+            store.delete()
+        } catch (e: Exception) {
+            LOG.warn("removeStack: failed to delete persisted state ref: ${e.message}")
+        }
+
+        notifyStateChanged()
+        project.messageBus.syncPublisher(StackTreeStateListener.TOPIC).stateChanged()
+
+        val result = RemoveStackResult(
+            removedBranches  = leafFirstBranches,
+            deletedBranches  = deletedBranches,
+            removedWorktrees = removedWorktrees,
+            failedWorktrees  = failedWorktrees,
+        )
+        LOG.info("removeStack: ${result.summary()}")
+        return result
+    }
+
     override fun rebaseOntoParent(branch: String) {
         val git   = gitLayer()
         val store = stateStore()
@@ -531,6 +601,28 @@ class OpsLayerImpl(
             }
 
             return current.copy(trackedBranches = updated)
+        }
+
+        /**
+         * Returns a cleared [PluginState] (trunkBranch=null, empty trackedBranches) and
+         * the list of branch names in **leaf-first** order (children before parents),
+         * suitable for safe worktree removal and branch deletion.
+         */
+        fun applyRemoveStack(current: PluginState, stackRoot: String): Pair<PluginState, List<String>> {
+            val branches = current.trackedBranches
+            if (branches.isEmpty()) return current.copy(trunkBranch = null, trackedBranches = emptyMap()) to emptyList()
+
+            val ordered = mutableListOf<String>()
+            val queue = ArrayDeque<String>()
+            branches.values.filter { it.parentName == stackRoot || it.parentName == current.trunkBranch }
+                .forEach { queue.add(it.name) }
+            while (queue.isNotEmpty()) {
+                val name = queue.removeFirst()
+                ordered.add(name)
+                branches[name]?.children?.forEach { queue.add(it) }
+            }
+            branches.keys.filter { it !in ordered }.forEach { ordered.add(it) }
+            return current.copy(trunkBranch = null, trackedBranches = emptyMap()) to ordered.reversed()
         }
 
         /**

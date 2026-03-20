@@ -12,4 +12,7 @@ interface StackStateStore {
 
     /** Persists [state], replacing any previously stored state. */
     fun write(state: StackState)
+
+    /** Deletes all persisted state. No-op if nothing is stored. */
+    fun delete()
 }

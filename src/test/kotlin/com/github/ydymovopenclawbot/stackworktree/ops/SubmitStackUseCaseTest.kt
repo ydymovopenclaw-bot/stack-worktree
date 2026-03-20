@@ -108,6 +108,7 @@ class SubmitStackUseCaseTest {
 
         override fun read(): StackState? = stored
         override fun write(state: StackState) { stored = state; writeHistory += state }
+        override fun delete() { stored = null }
     }
 
     // ── State builder helpers ─────────────────────────────────────────────────

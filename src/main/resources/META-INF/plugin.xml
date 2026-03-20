@@ -58,6 +58,11 @@
             tabName="Stacks"
             className="com.github.ydymovopenclawbot.stackworktree.ui.StacksTabFactory"
             predicateClassName="com.github.ydymovopenclawbot.stackworktree.ui.StacksTabVisibilityPredicate"/>
+        <changesViewContent
+            id="Worktrees"
+            tabName="Worktrees"
+            className="com.github.ydymovopenclawbot.stackworktree.ui.WorktreesTabFactory"
+            predicateClassName="com.github.ydymovopenclawbot.stackworktree.ui.StacksTabVisibilityPredicate"/>
         <statusBarWidgetFactory
             id="com.github.ydymovopenclawbot.stackworktree.StackStatusBarWidget"
             implementation="com.github.ydymovopenclawbot.stackworktree.ui.StackStatusBarWidgetFactory"
@@ -147,6 +152,19 @@
                 - Ctrl+Alt+S    = Settings
             -->
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift S"/>
+        </action>
+
+        <action id="StackWorktree.RemoveStack"
+                class="com.github.ydymovopenclawbot.stackworktree.actions.RemoveStackAction"
+                text="Remove Stack"
+                description="Remove all branches from the stack, optionally deleting git branches and worktrees"/>
+
+        <action id="StackWorktree.CreateWorktreeFromBranch"
+                class="com.github.ydymovopenclawbot.stackworktree.actions.CreateWorktreeFromBranchAction"
+                text="Create Worktree"
+                description="Create a git worktree for this branch"
+                icon="AllIcons.Nodes.Folder">
+            <add-to-group group-id="Git.Branches.List" anchor="last"/>
         </action>
 
         <!--

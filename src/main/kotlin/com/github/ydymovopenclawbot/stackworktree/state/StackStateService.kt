@@ -86,6 +86,12 @@ class StackStateService : PersistentStateComponent<StackStateService.PersistStat
     fun clearWorktreePath(branch: String): Unit =
         synchronized(lock) { state.worktreePaths.remove(branch) }
 
+    /** Removes all tracked branches and worktree paths. Preserves worktreeBasePath (user preference). */
+    fun clearAll(): Unit = synchronized(lock) {
+        state.branchParents.clear()
+        state.worktreePaths.clear()
+    }
+
     /** Updates the configurable base directory used for default worktree path resolution. */
     fun setWorktreeBasePath(path: String): Unit =
         synchronized(lock) { state.worktreeBasePath = path }
