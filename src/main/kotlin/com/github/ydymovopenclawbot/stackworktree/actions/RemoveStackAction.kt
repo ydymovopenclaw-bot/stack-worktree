@@ -1,7 +1,9 @@
 package com.github.ydymovopenclawbot.stackworktree.actions
 
+import com.github.ydymovopenclawbot.stackworktree.git.IntelliJGitRunner
 import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
+import com.github.ydymovopenclawbot.stackworktree.state.StateStorage
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -36,9 +38,22 @@ class RemoveStackAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val stateLayer = project.service<StateLayer>()
-        val currentState = stateLayer.load()
-        val branchCount = currentState.trackedBranches.size
-        val trunkBranch = currentState.trunkBranch ?: "main"
+        val pluginState = stateLayer.load()
+
+        // Check both state sources: StateLayer (XML) and StateStorage (git-refs).
+        val repoRoot = git4idea.GitUtil.getRepositoryManager(project).repositories.firstOrNull()?.root
+        val stackState = repoRoot?.let {
+            StateStorage(java.io.File(it.path).toPath(), IntelliJGitRunner(project)).read()
+        }
+
+        val branchCount = if (pluginState.trackedBranches.isNotEmpty()) {
+            pluginState.trackedBranches.size
+        } else {
+            stackState?.branches?.size ?: 0
+        }
+        val trunkBranch = pluginState.trunkBranch
+            ?: stackState?.repoConfig?.trunk
+            ?: "main"
 
         if (branchCount == 0) return
 
@@ -79,8 +94,17 @@ class RemoveStackAction : AnAction() {
             e.presentation.isEnabled = false
             return
         }
-        val stateLayer = project.service<StateLayer>()
-        e.presentation.isEnabled = stateLayer.load().trackedBranches.isNotEmpty()
+        // Check both state sources.
+        val pluginState = project.service<StateLayer>().load()
+        if (pluginState.trackedBranches.isNotEmpty()) {
+            e.presentation.isEnabled = true
+            return
+        }
+        val repoRoot = git4idea.GitUtil.getRepositoryManager(project).repositories.firstOrNull()?.root
+        val hasGitRefsState = repoRoot?.let {
+            StateStorage(java.io.File(it.path).toPath(), IntelliJGitRunner(project)).read()
+        }?.branches?.isNotEmpty() == true
+        e.presentation.isEnabled = hasGitRefsState
     }
 
     /**

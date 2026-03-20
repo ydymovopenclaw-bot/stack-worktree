@@ -637,8 +637,12 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
         }
 
         // "Remove Stack" — always available when a stack exists (no node selection required).
+        // Check both StateLayer (XML) and StateStorage (git-refs) since stacks may be
+        // stored in either depending on how they were created.
         val removeState = stateLayer.load()
-        if (removeState.trackedBranches.isNotEmpty()) {
+        val hasStack = removeState.trackedBranches.isNotEmpty()
+            || (helpers?.storage?.read()?.branches?.isNotEmpty() == true)
+        if (hasStack) {
             val removeStackItem = JMenuItem("Remove Stack")
             removeStackItem.addActionListener {
                 am.getAction("StackWorktree.RemoveStack")?.let { action ->
