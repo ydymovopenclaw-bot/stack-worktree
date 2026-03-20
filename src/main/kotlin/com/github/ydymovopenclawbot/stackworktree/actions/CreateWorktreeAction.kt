@@ -104,19 +104,25 @@ class CreateWorktreeAction : AnAction() {
                     }
                 } catch (ex: WorktreeException) {
                     if (isNewBranch) {
-                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (e: Exception) {
+                            LOG.warn("Rollback: failed to delete orphaned branch '$selectedBranch'", e)
+                        }
                     }
                     LOG.warn("CreateWorktreeAction: git worktree add failed", ex)
                     notify(project, "Failed to create worktree: ${ex.message}", NotificationType.ERROR)
                 } catch (ex: IllegalStateException) {
                     if (isNewBranch) {
-                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (e: Exception) {
+                            LOG.warn("Rollback: failed to delete orphaned branch '$selectedBranch'", e)
+                        }
                     }
                     LOG.warn("CreateWorktreeAction: branch already has worktree", ex)
                     notify(project, ex.message ?: "Branch already has a worktree.", NotificationType.WARNING)
                 } catch (ex: Exception) {
                     if (isNewBranch) {
-                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (e: Exception) {
+                            LOG.warn("Rollback: failed to delete orphaned branch '$selectedBranch'", e)
+                        }
                     }
                     LOG.error("CreateWorktreeAction: unexpected error", ex)
                     notify(project, "Unexpected error: ${ex.message}", NotificationType.ERROR)

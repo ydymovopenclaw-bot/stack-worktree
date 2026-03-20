@@ -7,6 +7,7 @@ import com.github.ydymovopenclawbot.stackworktree.state.stackStateService
 import com.github.ydymovopenclawbot.stackworktree.ui.CreateWorktreeDialog
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
@@ -23,6 +24,8 @@ class CreateWorktreeFromBranchAction : DumbAwareAction(
     "Create a git worktree for this branch",
     null,
 ) {
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val gitLayer = project.service<GitLayer>()
@@ -81,7 +84,9 @@ class CreateWorktreeFromBranchAction : DumbAwareAction(
                     }
                 } catch (ex: Exception) {
                     if (isNewBranch) {
-                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (e: Exception) {
+                            LOG.warn("Rollback: failed to delete orphaned branch '$selectedBranch'", e)
+                        }
                     }
                     LOG.warn("CreateWorktreeFromBranch: failed", ex)
                     NotificationGroupManager.getInstance()

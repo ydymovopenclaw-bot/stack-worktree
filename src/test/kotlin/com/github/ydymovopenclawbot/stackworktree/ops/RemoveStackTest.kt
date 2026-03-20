@@ -112,6 +112,40 @@ class RemoveStackTest {
         assertEquals(setOf("a", "b"), ordered.toSet())
     }
 
+    // ── RemoveStackResult.summary() tests ──────────────────────────────────
+
+    @Test
+    fun `summary with only removed branches`() {
+        val result = RemoveStackResult(removedBranches = listOf("a", "b", "c"))
+        assertEquals("Removed 3 branch(es) from stack.", result.summary())
+    }
+
+    @Test
+    fun `summary with deleted branches and removed worktrees`() {
+        val result = RemoveStackResult(
+            removedBranches = listOf("a", "b"),
+            deletedBranches = listOf("a", "b"),
+            removedWorktrees = listOf("/wt/a", "/wt/b"),
+        )
+        assertEquals(
+            "Removed 2 branch(es) from stack, deleted 2 git branch(es), pruned 2 worktree(s).",
+            result.summary(),
+        )
+    }
+
+    @Test
+    fun `summary with failed worktrees`() {
+        val result = RemoveStackResult(
+            removedBranches = listOf("a", "b"),
+            removedWorktrees = listOf("/wt/b"),
+            failedWorktrees = mapOf("a" to "directory not empty"),
+        )
+        assertEquals(
+            "Removed 2 branch(es) from stack, pruned 1 worktree(s), 1 worktree(s) failed to remove.",
+            result.summary(),
+        )
+    }
+
     // ── Integration test: worktree-failure-skip ──────────────────────────────
 
     private class FakeGitLayer(
