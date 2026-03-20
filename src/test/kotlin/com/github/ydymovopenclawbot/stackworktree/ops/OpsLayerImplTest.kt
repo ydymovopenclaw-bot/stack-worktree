@@ -237,7 +237,7 @@ class OpsLayerImplTest {
         val removedWorktrees = mutableListOf<String>()
 
         override fun worktreeAdd(path: String, branch: String): Worktree = unsupported()
-        override fun worktreeRemove(path: String) { removedWorktrees += path }
+        override fun worktreeRemove(path: String, force: Boolean) { removedWorktrees += path }
         override fun worktreeList(): List<Worktree> = worktreeListProvider()
         override fun worktreePrune()                = unsupported()
         override fun aheadBehind(branch: String, parent: String): AheadBehind =

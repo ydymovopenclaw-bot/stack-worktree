@@ -415,7 +415,7 @@ class OpsLayerImpl(
                 val wtPath = stateService().getWorktreePath(branch)
                 if (wtPath != null) {
                     try {
-                        git.worktreeRemove(wtPath)
+                        git.worktreeRemove(wtPath, force = true)
                         removedWorktrees += wtPath
                     } catch (e: Exception) {
                         LOG.warn("removeStack: failed to remove worktree '$wtPath' for '$branch': ${e.message}")
@@ -424,8 +424,8 @@ class OpsLayerImpl(
                 }
             }
 
-            // Optionally delete the git branch.
-            if (deleteBranches) {
+            // Optionally delete the git branch — never delete trunk (main/master).
+            if (deleteBranches && branch != stackRoot && branch != "main" && branch != "master") {
                 try {
                     git.deleteBranch(branch)
                     deletedBranches += branch

@@ -40,7 +40,7 @@ open class FakeGitLayer(
         return worktreeAddProvider(path, branch)
     }
 
-    override fun worktreeRemove(path: String) { removeCalls += path }
+    override fun worktreeRemove(path: String, force: Boolean) { removeCalls += path }
     override fun worktreeList(): List<Worktree> = worktreeListResult
     override fun worktreePrune() = Unit
     override fun listLocalBranches(): List<String> = localBranches

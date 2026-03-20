@@ -18,7 +18,7 @@ class AheadBehindCalculatorTest {
 
         override fun worktreeAdd(path: String, branch: String): Worktree =
             Worktree(path, branch, head = "", isLocked = false)
-        override fun worktreeRemove(path: String) = Unit
+        override fun worktreeRemove(path: String, force: Boolean) = Unit
         override fun worktreeList(): List<Worktree> = emptyList()
         override fun worktreePrune() = Unit
         override fun listLocalBranches(): List<String> = emptyList()

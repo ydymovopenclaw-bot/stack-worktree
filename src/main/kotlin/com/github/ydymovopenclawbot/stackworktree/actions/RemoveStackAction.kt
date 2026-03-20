@@ -108,7 +108,7 @@ class RemoveStackAction : AnAction() {
     }
 
     /**
-     * Confirmation dialog for the Remove Stack operation.
+     * Confirmation dialog for the Delete Entire Stack operation.
      *
      * Shows the branch count and two checkboxes (both unchecked by default):
      * - "Delete git branches"
@@ -124,7 +124,7 @@ class RemoveStackAction : AnAction() {
         private val removeWorktreesCheckbox = JCheckBox("Remove linked worktrees", false)
 
         init {
-            title = "Remove Stack"
+            title = "Delete Entire Stack"
             setOKButtonText("Remove")
             init()
         }

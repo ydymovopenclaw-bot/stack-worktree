@@ -46,7 +46,7 @@ class SubmitStackUseCaseTest {
 
         // Unused stubs.
         override fun worktreeAdd(p: String, b: String): Worktree = stub()
-        override fun worktreeRemove(path: String) = Unit
+        override fun worktreeRemove(path: String, force: Boolean) = Unit
         override fun worktreeList(): List<Worktree> = emptyList()
         override fun worktreePrune() = Unit
         override fun listLocalBranches(): List<String> = emptyList()

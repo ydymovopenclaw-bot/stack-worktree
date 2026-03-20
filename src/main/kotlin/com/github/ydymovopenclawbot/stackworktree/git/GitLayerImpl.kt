@@ -69,8 +69,8 @@ class GitLayerImpl(
             ?: throw WorktreeCommandException("worktree add succeeded but path not found in list: $path")
     }
 
-    override fun worktreeRemove(path: String) {
-        val result = runRaw("remove", path)
+    override fun worktreeRemove(path: String, force: Boolean) {
+        val result = if (force) runRaw("remove", "--force", path) else runRaw("remove", path)
         if (!result.success()) {
             val err = result.errorOutputAsJoinedString
             when {

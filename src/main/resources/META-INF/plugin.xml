@@ -156,8 +156,8 @@
 
         <action id="StackWorktree.RemoveStack"
                 class="com.github.ydymovopenclawbot.stackworktree.actions.RemoveStackAction"
-                text="Remove Stack"
-                description="Remove all branches from the stack, optionally deleting git branches and worktrees"/>
+                text="Delete Entire Stack"
+                description="Delete the entire stack, optionally deleting git branches and worktrees"/>
 
         <action id="StackWorktree.CreateWorktreeFromBranch"
                 class="com.github.ydymovopenclawbot.stackworktree.actions.CreateWorktreeFromBranchAction"

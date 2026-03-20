@@ -7,8 +7,8 @@ interface GitLayer {
     /** Creates a new worktree at [path] checked out at [branch]. */
     fun worktreeAdd(path: String, branch: String): Worktree
 
-    /** Removes the worktree at [path]. */
-    fun worktreeRemove(path: String)
+    /** Removes the worktree at [path]. When [force] is true, removes even with uncommitted changes. */
+    fun worktreeRemove(path: String, force: Boolean = false)
 
     /** Returns the list of current git worktrees for the repository. */
     fun worktreeList(): List<Worktree>

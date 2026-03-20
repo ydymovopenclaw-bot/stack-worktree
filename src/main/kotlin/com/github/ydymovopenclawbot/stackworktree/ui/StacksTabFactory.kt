@@ -636,14 +636,14 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             popup.add(JSeparator())
         }
 
-        // "Remove Stack" — always available when a stack exists (no node selection required).
+        // "Delete Entire Stack" — always available when a stack exists (no node selection required).
         // Check both StateLayer (XML) and StateStorage (git-refs) since stacks may be
         // stored in either depending on how they were created.
         val removeState = stateLayer.load()
         val hasStack = removeState.trackedBranches.isNotEmpty()
             || (helpers?.storage?.read()?.branches?.isNotEmpty() == true)
         if (hasStack) {
-            val removeStackItem = JMenuItem("Remove Stack")
+            val removeStackItem = JMenuItem("Delete Entire Stack")
             removeStackItem.addActionListener {
                 am.getAction("StackWorktree.RemoveStack")?.let { action ->
                     am.tryToExecute(action, null, graph, ActionPlaces.POPUP, true)

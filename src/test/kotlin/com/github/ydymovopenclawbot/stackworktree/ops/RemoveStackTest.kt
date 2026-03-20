@@ -155,7 +155,7 @@ class RemoveStackTest {
         val deletedBranches  = mutableListOf<String>()
 
         override fun worktreeAdd(path: String, branch: String): Worktree = unsupported()
-        override fun worktreeRemove(path: String) {
+        override fun worktreeRemove(path: String, force: Boolean) {
             worktreeRemoveHandler(path) // may throw to simulate failure
             removedWorktrees += path
         }
