@@ -188,6 +188,8 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
     // ── ChangesViewContentProvider ────────────────────────────────────────────
 
     override fun initContent(): JComponent {
+        LOG.debug("initContent: building Stacks tab for project '${project.name}'")
+        try {
         val graph  = StackGraphPanel()
         graphPanel = graph
         val detail  = BranchDetailPanel()
@@ -340,6 +342,16 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     cachedWorktrees.find { it.branch == branch && it.path.isNotEmpty() }
                 }
                 else -> null
+            }
+        }
+        } catch (e: Exception) {
+            LOG.error("initContent: failed to initialize Stacks tab", e)
+            StackTreeNotifier.error(project, "Failed to load Stacks tab", e.stackTraceToString())
+            return JBPanel<JBPanel<*>>(BorderLayout()).apply {
+                add(
+                    com.intellij.ui.components.JBLabel("Failed to load Stacks tab — check idea.log"),
+                    BorderLayout.CENTER,
+                )
             }
         }
     }

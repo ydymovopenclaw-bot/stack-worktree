@@ -1,6 +1,7 @@
 package com.github.ydymovopenclawbot.stackworktree.git
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
@@ -11,6 +12,8 @@ import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
 import git4idea.rebase.GitRebaser
 import git4idea.update.GitUpdateResult
+
+private val LOG = logger<GitLayerImpl>()
 
 /**
  * Production [GitLayer] implementation registered as a project-level service.
@@ -56,37 +59,53 @@ class GitLayerImpl(
     // ── Public API ────────────────────────────────────────────────────────────
 
     override fun worktreeAdd(path: String, branch: String): Worktree {
+        LOG.debug("worktreeAdd: path=$path branch=$branch")
         val result = runRaw("add", path, branch)
         if (!result.success()) {
             val err = result.errorOutputAsJoinedString
             if (err.contains("already exists", ignoreCase = true)) {
+                LOG.warn("worktreeAdd: path already exists — $path")
                 throw WorktreeAlreadyExistsException(path)
             }
+            LOG.warn("worktreeAdd: command failed — $err")
             throw WorktreeCommandException(err)
         }
         val canonical = java.io.File(path).canonicalPath
-        return worktreeList().firstOrNull { java.io.File(it.path).canonicalPath == canonical }
+        val wt = worktreeList().firstOrNull { java.io.File(it.path).canonicalPath == canonical }
             ?: throw WorktreeCommandException("worktree add succeeded but path not found in list: $path")
+        LOG.debug("worktreeAdd: created worktree [branch=${wt.branch} path=${wt.path}]")
+        return wt
     }
 
     override fun worktreeRemove(path: String, force: Boolean) {
+        LOG.debug("worktreeRemove: path=$path force=$force")
         val result = if (force) runRaw("remove", "--force", path) else runRaw("remove", path)
         if (!result.success()) {
             val err = result.errorOutputAsJoinedString
             when {
-                err.contains("is locked", ignoreCase = true) ->
+                err.contains("is locked", ignoreCase = true) -> {
+                    LOG.warn("worktreeRemove: locked — $path")
                     throw WorktreeIsLockedException(path)
+                }
                 err.contains("not a working tree", ignoreCase = true) ||
-                        err.contains("is not a registered worktree", ignoreCase = true) ->
+                        err.contains("is not a registered worktree", ignoreCase = true) -> {
+                    LOG.warn("worktreeRemove: not found — $path")
                     throw WorktreeNotFoundException(path)
-                else -> throw WorktreeCommandException(err)
+                }
+                else -> {
+                    LOG.warn("worktreeRemove: command failed — $err")
+                    throw WorktreeCommandException(err)
+                }
             }
         }
+        LOG.debug("worktreeRemove: removed $path")
     }
 
     override fun worktreeList(): List<Worktree> {
         val lines = runOrThrow("list", "--porcelain")
-        return parsePorcelain(lines)
+        val result = parsePorcelain(lines)
+        LOG.debug("worktreeList: found ${result.size} worktree(s)")
+        return result
     }
 
     // Delegate to the companion so the implementation is accessible from unit tests
@@ -95,7 +114,9 @@ class GitLayerImpl(
         Companion.parsePorcelain(lines)
 
     override fun worktreePrune() {
+        LOG.debug("worktreePrune: pruning stale worktrees")
         runOrThrow("prune")
+        LOG.debug("worktreePrune: done")
     }
 
     override fun listLocalBranches(): List<String> {

@@ -195,6 +195,7 @@ class RemoveStackTest {
         val notifications = mutableListOf<String>()
         override fun refresh() = Unit
         override fun notify(message: String) { notifications += message }
+        override fun notifyError(message: String, detail: String?) { }
     }
 
     /**

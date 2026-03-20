@@ -1,8 +1,8 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
     <id>com.github.ydymovopenclawbot.stackworktree</id>
-    <name>stack-worktree</name>
-    <vendor>ydymovopenclaw-bot</vendor>
+    <name>StackTree</name>
+    <vendor url="https://github.com/ydymovopenclaw-bot/stack-worktree">ydymovopenclaw-bot</vendor>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>Git4Idea</depends>
