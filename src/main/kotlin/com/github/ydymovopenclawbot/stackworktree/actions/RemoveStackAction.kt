@@ -4,9 +4,11 @@ import com.github.ydymovopenclawbot.stackworktree.ops.OpsLayer
 import com.github.ydymovopenclawbot.stackworktree.state.StateLayer
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.ui.DialogWrapper
@@ -25,7 +27,11 @@ import javax.swing.JPanel
  * "Remove linked worktrees" (both unchecked by default). On confirmation, dispatches
  * the operation to a background thread.
  */
+private val LOG = logger<RemoveStackAction>()
+
 class RemoveStackAction : AnAction() {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
@@ -45,16 +51,24 @@ class RemoveStackAction : AnAction() {
         object : Task.Backgroundable(project, "Removing stack\u2026", false) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = true
-                val opsLayer = project.service<OpsLayer>()
-                val result = opsLayer.removeStack(
-                    stackRoot = trunkBranch,
-                    deleteBranches = deleteBranches,
-                    removeWorktrees = removeWorktrees,
-                )
-                NotificationGroupManager.getInstance()
-                    .getNotificationGroup("StackWorktree")
-                    .createNotification(result.summary(), NotificationType.INFORMATION)
-                    .notify(project)
+                try {
+                    val opsLayer = project.service<OpsLayer>()
+                    val result = opsLayer.removeStack(
+                        stackRoot = trunkBranch,
+                        deleteBranches = deleteBranches,
+                        removeWorktrees = removeWorktrees,
+                    )
+                    NotificationGroupManager.getInstance()
+                        .getNotificationGroup("StackWorktree")
+                        .createNotification(result.summary(), NotificationType.INFORMATION)
+                        .notify(project)
+                } catch (ex: Exception) {
+                    LOG.warn("RemoveStack failed", ex)
+                    NotificationGroupManager.getInstance()
+                        .getNotificationGroup("StackWorktree")
+                        .createNotification("Failed to remove stack: ${ex.message}", NotificationType.ERROR)
+                        .notify(project)
+                }
             }
         }.queue()
     }

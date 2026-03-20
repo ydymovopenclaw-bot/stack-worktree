@@ -407,6 +407,7 @@ class OpsLayerImpl(
         val deletedBranches   = mutableListOf<String>()
         val removedWorktrees  = mutableListOf<String>()
         val failedWorktrees   = mutableMapOf<String, String>()
+        val failedBranches    = mutableMapOf<String, String>()
 
         for (branch in leafFirstBranches) {
             // Optionally remove linked worktree (skip on failure).
@@ -430,6 +431,7 @@ class OpsLayerImpl(
                     deletedBranches += branch
                 } catch (e: Exception) {
                     LOG.warn("removeStack: failed to delete branch '$branch': ${e.message}")
+                    failedBranches[branch] = e.message ?: "unknown error"
                 }
             }
         }
@@ -451,6 +453,7 @@ class OpsLayerImpl(
             deletedBranches  = deletedBranches,
             removedWorktrees = removedWorktrees,
             failedWorktrees  = failedWorktrees,
+            failedBranches   = failedBranches,
         )
         LOG.info("removeStack: ${result.summary()}")
         return result

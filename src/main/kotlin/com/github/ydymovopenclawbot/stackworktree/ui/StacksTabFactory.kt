@@ -751,19 +751,25 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     }
                 } catch (ex: WorktreeException) {
                     if (isNewBranch) {
-                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (e: Exception) {
+                            LOG.warn("Rollback: failed to delete orphaned branch '$selectedBranch'", e)
+                        }
                     }
                     LOG.warn("StacksTabFactory: createWorktree failed", ex)
                     notify("Failed to create worktree: ${ex.message}", NotificationType.ERROR)
                 } catch (ex: IllegalStateException) {
                     if (isNewBranch) {
-                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (e: Exception) {
+                            LOG.warn("Rollback: failed to delete orphaned branch '$selectedBranch'", e)
+                        }
                     }
                     LOG.warn("StacksTabFactory: branch already has worktree", ex)
                     notify(ex.message ?: "Branch already has a worktree.", NotificationType.WARNING)
                 } catch (ex: Exception) {
                     if (isNewBranch) {
-                        try { gitLayer.deleteBranch(selectedBranch) } catch (_: Exception) {}
+                        try { gitLayer.deleteBranch(selectedBranch) } catch (e: Exception) {
+                            LOG.warn("Rollback: failed to delete orphaned branch '$selectedBranch'", e)
+                        }
                     }
                     LOG.error("StacksTabFactory: createWorktree unexpected error", ex)
                     notify("Unexpected error: ${ex.message}", NotificationType.ERROR)
