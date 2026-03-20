@@ -636,19 +636,17 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
             popup.add(JSeparator())
         }
 
-        // "Remove Stack" — only when a node is selected and there are tracked branches.
-        if (node != null) {
-            val currentState = stateLayer.load()
-            if (currentState.trackedBranches.isNotEmpty()) {
-                val removeStackItem = JMenuItem("Remove Stack")
-                removeStackItem.addActionListener {
-                    am.getAction("StackWorktree.RemoveStack")?.let { action ->
-                        am.tryToExecute(action, null, graph, ActionPlaces.POPUP, true)
-                    }
+        // "Remove Stack" — always available when a stack exists (no node selection required).
+        val removeState = stateLayer.load()
+        if (removeState.trackedBranches.isNotEmpty()) {
+            val removeStackItem = JMenuItem("Remove Stack")
+            removeStackItem.addActionListener {
+                am.getAction("StackWorktree.RemoveStack")?.let { action ->
+                    am.tryToExecute(action, null, graph, ActionPlaces.POPUP, true)
                 }
-                popup.add(removeStackItem)
-                popup.add(JSeparator())
             }
+            popup.add(removeStackItem)
+            popup.add(JSeparator())
         }
 
         // "Track Branch…" — always available.
