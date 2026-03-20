@@ -23,7 +23,7 @@ import java.nio.file.Path
  *  - CAT_FILE     → git cat-file
  *  - UPDATE_REF   → git update-ref
  *  - HASH_OBJECT  → git hash-object
- *  - COMMIT_TREE  → git commit-tree
+ *  - write("commit-tree") → git commit-tree (ad-hoc write command)
  */
 class IntelliJGitRunner(private val project: Project) : GitRunner {
 
@@ -37,13 +37,22 @@ class IntelliJGitRunner(private val project: Project) : GitRunner {
         "cat-file" to GitCommand.CAT_FILE,
         "update-ref" to GitCommand.UPDATE_REF,
         "hash-object" to GitCommand.HASH_OBJECT,
-        // "commit-tree" — no GitCommand constant available in this platform version;
-        // falls back to ProcessGitRunner via the "unsupported command" path.
     )
+
+    /**
+     * Commands not present in [GitCommand] are executed via [ProcessBuilder] as a fallback.
+     * `commit-tree` is used by [com.github.ydymovopenclawbot.stackworktree.state.StateStorage]
+     * but has no corresponding [GitCommand] constant.
+     */
+    private val fallbackCommands = setOf("commit-tree")
 
     override fun run(workDir: Path, args: List<String>): GitRunResult {
         val commandName = args.firstOrNull()
             ?: return GitRunResult("", "No git command provided", -1)
+
+        if (commandName in fallbackCommands) {
+            return runViaProcess(workDir, args)
+        }
 
         val gitCommand = commandMap[commandName]
             ?: return GitRunResult("", "Unsupported git command for IntelliJGitRunner: $commandName", -1)
@@ -60,5 +69,16 @@ class IntelliJGitRunner(private val project: Project) : GitRunner {
             stderr = result.errorOutput.joinToString("\n"),
             exitCode = if (result.success()) 0 else 1,
         )
+    }
+
+    private fun runViaProcess(workDir: Path, args: List<String>): GitRunResult {
+        val process = ProcessBuilder(listOf("git") + args)
+            .directory(workDir.toFile())
+            .redirectErrorStream(false)
+            .start()
+        val stdout = process.inputStream.bufferedReader().readText().trim()
+        val stderr = process.errorStream.bufferedReader().readText().trim()
+        val exitCode = process.waitFor()
+        return GitRunResult(stdout, stderr, exitCode)
     }
 }

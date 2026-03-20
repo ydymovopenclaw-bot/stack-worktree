@@ -56,8 +56,11 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.messages.MessageBusConnection
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
+import git4idea.branch.GitBrancher
 import java.awt.BorderLayout
 import java.awt.Point
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 import java.io.File
 import java.nio.file.Paths
 import javax.swing.JComponent
@@ -220,7 +223,16 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                 }
             }
         }
-        graph.onNodeNavigated = { node -> LOG.info("Navigate requested for: ${node.branchName}") }
+        graph.onNodeNavigated = lambda@{ node ->
+            val wt = cachedWorktrees.find { it.branch == node.branchName && it.path.isNotEmpty() }
+            if (wt != null) {
+                OpenInNewWindowAction.perform(wt)
+            } else {
+                val repoManager = GitRepositoryManager.getInstance(project)
+                val repo = repoManager.repositories.firstOrNull() ?: return@lambda
+                GitBrancher.getInstance(project).checkout(node.branchName, false, listOf(repo), null)
+            }
+        }
 
         // ── Right-click → single unified context menu ─────────────────────────
         //
@@ -599,6 +611,27 @@ class StacksTabFactory(private val project: Project) : ChangesViewContentProvide
                     popup.add(openTerminalItem)
                 }
             }
+
+            // "View PR in Browser" — only when the branch has a PR.
+            if (node.prStatus != null) {
+                val viewPrItem = JMenuItem("View PR in Browser")
+                viewPrItem.addActionListener {
+                    ApplicationManager.getApplication().executeOnPooledThread {
+                        project.service<PrLayer>().openPr(node.branchName)
+                    }
+                }
+                popup.add(viewPrItem)
+            }
+
+            popup.add(JSeparator())
+
+            // "Copy Branch Name" — always available when a node is selected.
+            val copyItem = JMenuItem("Copy Branch Name")
+            copyItem.addActionListener {
+                val selection = StringSelection(node.branchName)
+                Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, null)
+            }
+            popup.add(copyItem)
 
             popup.add(JSeparator())
         }
