@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+  <!-- StackTree plugin icon — dark theme -->
+  <!-- Motif: three stacked branch nodes connected by vertical lines -->
+
+  <!-- Trunk node (bottom) -->
+  <circle cx="20" cy="32" r="4" fill="#9D8FFF"/>
+
+  <!-- Mid node -->
+  <circle cx="20" cy="20" r="4" fill="#9D8FFF"/>
+
+  <!-- Top node -->
+  <circle cx="20" cy="8" r="4" fill="#9D8FFF"/>
+
+  <!-- Vertical connector lines -->
+  <line x1="20" y1="12" x2="20" y2="16" stroke="#9D8FFF" stroke-width="2" stroke-linecap="round"/>
+  <line x1="20" y1="24" x2="20" y2="28" stroke="#9D8FFF" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Branch fork from mid node -->
+  <circle cx="31" cy="20" r="3" fill="#C4B8FF" opacity="0.85"/>
+  <line x1="24" y1="20" x2="28" y2="20" stroke="#C4B8FF" stroke-width="2" stroke-linecap="round"/>
+</svg>

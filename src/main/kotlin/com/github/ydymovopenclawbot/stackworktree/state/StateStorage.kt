@@ -3,11 +3,17 @@ package com.github.ydymovopenclawbot.stackworktree.state
 import com.github.ydymovopenclawbot.stackworktree.git.GitException
 import com.github.ydymovopenclawbot.stackworktree.git.GitRunResult
 import com.github.ydymovopenclawbot.stackworktree.git.GitRunner
+import com.intellij.openapi.diagnostic.logger
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+
+private val LOG = logger<StateStorage>()
 
 /**
  * Persists [StackState] as a single JSON blob inside the git object store, pointed to by
@@ -29,19 +35,35 @@ class StateStorage(
     private val root: Path,
     private val runner: GitRunner,
 ) : StackStateStore {
+
+    /** Guards [write] against concurrent calls from multiple coroutines in the same JVM. */
+    private val writeLock = ReentrantLock()
+
     // ----------------------------------------------------------------------------------
     // Public API
     // ----------------------------------------------------------------------------------
 
     /** Returns `true` if [REF] already exists in the repository. */
-    fun exists(): Boolean = runner.run(root, listOf("rev-parse", "--verify", REF)).isSuccess
+    fun exists(): Boolean {
+        val result = runner.run(root, listOf("rev-parse", "--verify", REF)).isSuccess
+        LOG.debug("exists [root=$root]: $result")
+        return result
+    }
 
     /**
      * Reads and deserializes the [StackState] from [REF], or returns `null` if the ref
      * does not exist yet (i.e. StackTree has never written state to this repository).
+     *
+     * @throws StateCorruptedException when the stored JSON cannot be deserialized.
+     * @throws GitException when git plumbing commands fail.
      */
     override fun read(): StackState? {
-        if (!exists()) return null
+        if (!exists()) {
+            LOG.debug("read [root=$root]: ref $REF not found — returning null")
+            return null
+        }
+
+        LOG.debug("read [root=$root]: resolving commit → tree → blob")
 
         // commit → tree SHA
         val commitText = exec("cat-file", "-p", REF).stdout
@@ -62,7 +84,14 @@ class StateStorage(
             ?: throw GitException("Corrupt stack state: unexpected tree entry format: $blobLine")
 
         val jsonStr = exec("cat-file", "blob", blobSha).stdout
-        return JSON.decodeFromString<StackState>(jsonStr)
+        LOG.debug("read [root=$root]: deserializing blob $blobSha (${jsonStr.length} chars)")
+
+        return try {
+            JSON.decodeFromString<StackState>(jsonStr)
+        } catch (e: SerializationException) {
+            LOG.error("read [root=$root]: JSON deserialization failed for blob $blobSha — throwing StateCorruptedException", e)
+            throw StateCorruptedException("JSON in blob $blobSha cannot be deserialized: ${e.message}", e)
+        }
     }
 
     /**
@@ -75,15 +104,18 @@ class StateStorage(
      *    parent when the ref already exists.
      * 4. Advance [REF] to the new commit via `git update-ref`.
      */
-    override fun write(state: StackState) {
+    override fun write(state: StackState): Unit = writeLock.withLock {
+        LOG.debug("write [root=$root]: serializing StackState")
         val jsonStr = JSON.encodeToString(state)
 
         // Step 1 — blob
         val blobSha = execWithStdin(jsonStr, "hash-object", "-w", "--stdin").trim()
+        LOG.debug("write [root=$root]: blob written [$blobSha]")
 
         // Step 2 — tree  (mktree reads one entry per line from stdin; tab-separated)
         val treeInput = "100644 blob $blobSha\t$BLOB_FILENAME\n"
         val treeSha = execWithStdin(treeInput, "mktree").trim()
+        LOG.debug("write [root=$root]: tree written [$treeSha]")
 
         // Step 3 — commit (optionally chain parent)
         val parentSha = runner.run(root, listOf("rev-parse", "--verify", REF))
@@ -95,9 +127,11 @@ class StateStorage(
             add("-m"); add("stacktree state")
         }
         val commitSha = execWithEnv(AUTHOR_ENV, *commitArgs.toTypedArray()).trim()
+        LOG.debug("write [root=$root]: commit created [$commitSha] parent=[${parentSha ?: "none"}]")
 
         // Step 4 — advance ref
         exec("update-ref", REF, commitSha)
+        LOG.debug("write [root=$root]: ref $REF advanced to $commitSha")
     }
 
     override fun delete() {
@@ -167,6 +201,7 @@ class StateStorage(
         val finished = process.waitFor(30, TimeUnit.SECONDS)
         if (!finished) {
             process.destroyForcibly()
+            LOG.warn("runProcess [root=$root]: git ${args[0]} timed out after 30s — process killed")
             throw GitException("git ${args[0]} timed out after 30s")
         }
 

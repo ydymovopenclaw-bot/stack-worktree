@@ -1,9 +1,12 @@
 package com.github.ydymovopenclawbot.stackworktree.git
 
+import com.intellij.openapi.diagnostic.logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.nio.file.Path
+
+private val LOG = logger<GitExecutor>()
 
 /** A single commit entry returned by [GitExecutor.log]. */
 data class LogEntry(val hash: String, val subject: String, val authorDate: String)
@@ -37,15 +40,21 @@ class GitExecutor(
     private suspend fun exec(vararg args: String): Result<GitRunResult> =
         withContext(Dispatchers.IO) {
             runCatching {
+                LOG.debug("exec: git ${args.joinToString(" ")} [root=$root]")
                 withTimeout(timeoutMs) {
                     val result = runner.run(root, args.toList())
                     if (!result.isSuccess) {
                         val msg = result.stderr.ifBlank {
                             "git ${args[0]} failed with exit code ${result.exitCode}"
                         }
+                        LOG.warn("exec: git ${args[0]} failed — $msg")
                         throw GitException(msg)
                     }
                     result
+                }
+            }.onFailure { t ->
+                if (t is kotlinx.coroutines.TimeoutCancellationException) {
+                    LOG.error("exec: git ${args[0]} timed out after ${timeoutMs}ms [root=$root]")
                 }
             }
         }

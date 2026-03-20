@@ -301,10 +301,12 @@ class OpsLayerImplTest {
 
     private class FakeUiLayer : UiLayer {
         val notifications = mutableListOf<String>()
+        val errors        = mutableListOf<String>()
         var refreshCount  = 0
 
         override fun refresh() { refreshCount++ }
         override fun notify(message: String) { notifications += message }
+        override fun notifyError(message: String, detail: String?) { errors += message }
     }
 
     private class FakeStateLayer(initial: PluginState = PluginState()) : StateLayer {
