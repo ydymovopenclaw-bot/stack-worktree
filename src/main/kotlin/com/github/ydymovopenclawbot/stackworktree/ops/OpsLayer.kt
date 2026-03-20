@@ -20,7 +20,7 @@ interface OpsLayer {
      * (e.g. via [com.intellij.openapi.progress.Task.Backgroundable]).
      *
      * @param autoPrune When `true`, linked worktrees for merged branches are removed via
-     *                  `git worktree remove`. Defaults to `true`.
+     *                  `git worktree remove`. Defaults to `false`.
      * @return [SyncResult] describing what changed; also shown as a notification balloon.
      */
     fun syncAll(autoPrune: Boolean = false): SyncResult

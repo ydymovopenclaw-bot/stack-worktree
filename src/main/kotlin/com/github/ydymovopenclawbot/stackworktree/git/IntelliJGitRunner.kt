@@ -76,8 +76,12 @@ class IntelliJGitRunner(private val project: Project) : GitRunner {
             .directory(workDir.toFile())
             .redirectErrorStream(false)
             .start()
+        // Read stderr on a separate thread to avoid pipe-buffer deadlock
+        val stderrFuture = java.util.concurrent.CompletableFuture.supplyAsync {
+            process.errorStream.bufferedReader().readText().trim()
+        }
         val stdout = process.inputStream.bufferedReader().readText().trim()
-        val stderr = process.errorStream.bufferedReader().readText().trim()
+        val stderr = stderrFuture.get()
         val exitCode = process.waitFor()
         return GitRunResult(stdout, stderr, exitCode)
     }
