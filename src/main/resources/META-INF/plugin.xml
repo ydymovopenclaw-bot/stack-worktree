@@ -165,6 +165,7 @@
                 description="Create a git worktree for this branch"
                 icon="AllIcons.Nodes.Folder">
             <add-to-group group-id="Git.Branches.List" anchor="last"/>
+            <add-to-group group-id="Git.Branch" anchor="last"/>
         </action>
 
         <!--
